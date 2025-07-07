@@ -2139,3 +2139,8 @@ config ARCH_HAS_SYNC_CORE_BEFORE_USERMODE
 # <asm/syscall_wrapper.h>.
 config ARCH_HAS_SYSCALL_WRAPPER
 	def_bool n
+
+config OSDB_SYSCALLS
+	bool "OSDB support"
+	help
+      Enables the system calls to support the OSDB functions.
