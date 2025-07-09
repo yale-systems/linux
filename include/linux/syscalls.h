@@ -78,11 +78,11 @@ struct cachestat;
 struct statmount;
 struct mnt_id_req;
 struct xattr_args;
-struct osdb_vtable_create_args;
-struct osdb_vtable_connect_args;
+//struct osdb_vtable_create_args;
+//struct osdb_vtable_connect_args;
 struct osdb_vtable_bestindex_args;
-struct osdb_vtable_disconnect_args;
-struct osdb_vtable_destroy_args;
+//struct osdb_vtable_disconnect_args;
+//struct osdb_vtable_destroy_args;
 struct osdb_vtable_open_args;
 struct osdb_vtable_close_args;
 struct osdb_vtable_filter_args;
@@ -1228,21 +1228,20 @@ asmlinkage long sys_ni_syscall(void);
 asmlinkage long sys_ni_posix_timers(void);
 
 
-#ifdef CONFIG_OSDB
-asmlinkage int sys_osdb_vtable_create(struct osdb_vtable_create_args *args);
-asmlinkage int sys_osdb_vtable_connect(struct osdb_vtable_connect_args *args);
+asmlinkage int sys_osdb_vtable_create(int flags);
+asmlinkage int sys_osdb_vtable_connect(int flags);
 asmlinkage int sys_osdb_vtable_bestindex(struct osdb_vtable_bestindex_args *args);
-asmlinkage int sys_osdb_vtable_disconnect(struct osdb_vtable_disconnect_args *args);
-asmlinkage int sys_osdb_vtable_destroy(struct osdb_vtable_destroy_args *args);
+asmlinkage int sys_osdb_vtable_disconnect(int flags);
+asmlinkage int sys_osdb_vtable_destroy(int flags);
 asmlinkage int sys_osdb_vtable_open(struct osdb_vtable_open_args *args);
 asmlinkage int sys_osdb_vtable_close(struct osdb_vtable_close_args *args);
 asmlinkage int sys_osdb_vtable_filter(struct osdb_vtable_filter_args *args);
 asmlinkage int sys_osdb_vtable_next(struct osdb_vtable_next_args *args);
 asmlinkage int sys_osdb_vtable_eof(struct osdb_vtable_eof_args *args);
 asmlinkage int sys_osdb_vtable_column(struct osdb_vtable_column_args *args);
-asmlinkage int sys_osdb_vtable_rowid(struct osdb_vtable_rowid_args *args);
+asmlinkage long long sys_osdb_vtable_rowid(struct osdb_vtable_rowid_args *args);
 asmlinkage int sys_osdb_vtable_update(struct osdb_vtable_update_args *args);
-#endif
+asmlinkage int sys_osdb_vtable_snapshot(int flags);
 
 /*
  * Kernel code should not call syscalls (i.e., sys_xyzyyz()) directly.

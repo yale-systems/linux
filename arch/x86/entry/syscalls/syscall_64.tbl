@@ -450,3 +450,4 @@
 558 common  osdb_vtable_column      sys_osdb_vtable_column
 559 common  osdb_vtable_rowid       sys_osdb_vtable_rowid
 560 common  osdb_vtable_update      sys_osdb_vtable_update
+561 common  osdb_vtable_snapshot    sys_osdb_vtable_snapshot
