@@ -9,11 +9,13 @@
 
 enum osdb_value_tag {
 	OSDB_VALUE_INT,
-    OSDB_VALUE_TEXT,
+	OSDB_VALUE_TEXT,
+    OSDB_VALUE_NULL,
 };
 
 struct osdb_value {
-    enum osdb_value_tag type;
+	enum osdb_value_tag type;
+    size_t len;
     union {
 	    char *ptr_value;
 		int64_t int_value;

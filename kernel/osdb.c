@@ -1,29 +1,40 @@
+#include "asm-generic/errno-base.h"
+#include "linux/compiler.h"
+#include <linux/bitmap.h>
 #include <linux/errno.h>
-#include <linux/syscalls.h>
-#include <uapi/linux/osdb.h>
+#include <linux/gfp_types.h>
 #include <linux/list.h>
-
+#include <linux/sched.h>
+#include <linux/slab.h>
+#include <linux/string.h>
+#include <linux/syscalls.h>
+#include <linux/tty.h>
+#include <linux/types.h>
+#include <uapi/linux/osdb.h>
 
 #define MAX_CURSORS 5
 
 struct snapshot {
-	struct osdb_value *data;
-    int size;
+	struct list_head list;
+    ktime_t timestamp;
+    int len;
     int cap;
-    // TODO add snapshot time
-    struct list_head list;
+    struct osdb_value data[];
 };
 
 struct snapshots {
     struct list_head head;
-    int size;
+    int len;
 };
 
 struct table {
 	int id;
 	int enabled;
+    int colnum;
 	struct snapshots sshts;
-    int (*sshot_rtn)(void);
+	void (*lock)(void);
+    void (*unlock)(void);
+    struct snapshot *(*sshot_rtn)(ktime_t);
 };
 
 struct cursor {
@@ -35,15 +46,170 @@ struct cursor {
 };
 
 
-static int process_snapshot(void)
+/* OSDB value functions */
+static void osdb_value_int_init(struct osdb_value *value, int64_t val)
 {
+	value->type = OSDB_VALUE_INT;
+    value->len = sizeof(val);
+	value->int_value = val;
+}
+
+static int osdb_value_text_init(struct osdb_value *value, const char *text)
+{
+	size_t n = strlen(text) + 1;
+
+	value->ptr_value = kmalloc(n, GFP_KERNEL);
+	if (unlikely(value->ptr_value == NULL))
+		return 1;
+
+	value->type = OSDB_VALUE_TEXT;
+    value->len = n;
+    strcpy(value->ptr_value, text);
+
     return 0;
 }
 
-// FIXME all locking logic is still missing
+static void osdb_value_null_init(struct osdb_value *value)
+{
+	value->type = OSDB_VALUE_NULL;
+    value->len = sizeof(NULL);
+    value->ptr_value = NULL;
+}
+
+static void osdb_value_free(struct osdb_value *value)
+{
+	if (value->type == OSDB_VALUE_TEXT)
+        kfree(value->ptr_value);
+}
+
+
+/* snapshot function */
+static void snapshot_free(struct snapshot *ssht)
+{
+    for (int i = 0; i < ssht->len; ++i)
+	    osdb_value_free(ssht->data + i);
+    kfree(ssht);
+}
+
+
+/* Process routines */
+static void process_lock(void)
+{
+    rcu_read_lock();
+}
+
+static inline int process_snapshot_task(struct snapshot *ssht, struct task_struct *tsk)
+{
+	char name[TASK_COMM_LEN];
+    int err;
+
+	/* Recording the pid */
+    osdb_value_int_init(ssht->data + ssht->len, task_pid_nr(tsk));
+    ++ssht->len;
+
+    /* Recording the euid */
+    osdb_value_int_init(ssht->data + ssht->len, tsk->cred->euid.val);
+    ++ssht->len;
+
+    /* Recording the gid */
+    osdb_value_int_init(ssht->data + ssht->len,
+                        pid_nr(get_task_pid(tsk, PIDTYPE_PGID)));
+    ++ssht->len;
+    
+    /* Recording the name */
+    get_task_comm(name, tsk);
+    err = osdb_value_text_init(ssht->data + ssht->len, name);
+    if (unlikely(err))
+        return 1;
+    ++ssht->len;
+
+    /* Recording the tty */
+    if (tsk->signal->tty) {
+        err = osdb_value_text_init(ssht->data + ssht->len,
+                                   tty_name(tsk->signal->tty));
+        if (unlikely(err))
+            return 1;
+    } else {
+        osdb_value_null_init(ssht->data + ssht->len);
+    }
+    ++ssht->len;
+
+    /* Recording the ppid */
+    if (tsk->parent)
+        osdb_value_int_init(ssht->data + ssht->len,
+                            task_pid_nr(tsk->parent));
+    else
+        osdb_value_null_init(ssht->data + ssht->len);
+    ++ssht->len;
+
+    return 0;
+}
+
+static struct snapshot *process_snapshot(ktime_t timestamp)
+{
+	unsigned long *bitset;
+	struct task_struct *tsk;
+	unsigned count = 0;
+	pid_t pid;
+    struct snapshot *ssht;
+
+	bitset = bitmap_alloc(PID_MAX_LIMIT + 1, GFP_KERNEL);
+	if (unlikely(bitset == NULL))
+		return NULL;
+
+    bitmap_zero(bitset, PID_MAX_LIMIT + 1);
+    for_each_process(tsk) {
+	    pid = task_pid_nr(tsk);
+	    if (!test_bit(pid, bitset)) {
+            set_bit(pid, bitset);
+            ++count;
+        }
+    }
+
+    pr_err("found %u processes...\n", count);
+
+    bitmap_zero(bitset, PID_MAX_LIMIT + 1);
+    ssht = kmalloc(sizeof(struct snapshot) + count*6 * sizeof(struct osdb_value), GFP_KERNEL);
+    if (unlikely(ssht == NULL))
+	    goto end;
+
+    ssht->cap = count*6;
+
+    for_each_process(tsk) {
+        pid = task_pid_nr(tsk);
+
+        if (test_bit(pid, bitset))
+            continue;
+
+        set_bit(pid, bitset);
+        if (unlikely(process_snapshot_task(ssht, tsk)))
+            goto error;
+    }
+
+    ssht->timestamp = timestamp;
+
+ end:
+    bitmap_free(bitset);
+    return ssht;
+
+ error:
+    snapshot_free(ssht);
+    bitmap_free(bitset);
+    return NULL;
+}
+
+static void process_unlock(void)
+{
+    rcu_read_lock();
+}
+
+
 static struct table tables[] = { {
         .id = OSDB_PROCESS,
         .enabled = 0,
+        .colnum = 6,
+        .lock = process_lock,
+        .unlock = process_unlock,
         .sshot_rtn = process_snapshot
     },
 };
@@ -53,12 +219,30 @@ static struct cursor cursors[MAX_CURSORS] = { 0 };
 static const int max_snapshots = 5;
 
 
-static inline void snapshots_init(struct snapshots *snapshots)
+static inline void snapshots_init(struct snapshots *sshts)
 {
-    INIT_LIST_HEAD(&snapshots->head);
-    snapshots->size = 0;
+    INIT_LIST_HEAD(&sshts->head);
+    sshts->len = 0;
 }
 
+static void snapshots_dequeue(struct snapshots *sshts)
+{
+	struct snapshot *head;
+
+	head = list_first_entry(&sshts->head, struct snapshot, list);
+	list_del(&head->list);
+    --sshts->len;
+    snapshot_free(head);
+}
+
+static inline void snapshots_enqueue(struct snapshots *sshts, struct snapshot *ssht)
+{
+    list_add_tail(&ssht->list, &sshts->head);
+    ++sshts->len;
+}
+
+
+/* syscalls implementations */
 static int do_osdb_vtable_create(int flags)
 {
     int i;
@@ -82,7 +266,8 @@ static int do_osdb_vtable_destroy(int flags)
 		if (!(flags & tables[i].id) || !tables[i].enabled)
 			continue;
 
-		// TODO free queue nodes
+		while (tables[i].sshts.len > 0)
+            snapshots_dequeue(&tables[i].sshts);
     }
 
     return 0;
@@ -206,14 +391,14 @@ SYSCALL_DEFINE1(osdb_vtable_next, int, cursor)
 	    return -EINVAL;
 
     p = cursors + cursor;
-    if (p->ssht->size <= p->row) {
+    if (p->ssht->len <= p->row) {
 	    p->row = 0;
         head = &tables[p->table].sshts.head;
 
         do {
             p->ssht = list_next_entry(p->ssht, list);
         } while (!list_entry_is_head(p->ssht, head, list) &&
-                 p->ssht->size <= p->row);
+                 p->ssht->len <= p->row);
 
         if (!list_entry_is_head(p->ssht, head, list))
             ++p->rowid;
@@ -268,13 +453,46 @@ SYSCALL_DEFINE1(osdb_vtable_update, struct osdb_vtable_update_args __user *, arg
 
 SYSCALL_DEFINE1(osdb_vtable_snapshot, int, flags)
 {
-    // TODO implement
-	for (int i = 0; i < tables_len; ++i) {
-		if (!(tables[i].id & flags))
+    struct snapshot *ssht;
+    int ret = 0;
+
+    pr_err("start acquiring all locks...\n");
+    for (int i = 0; i < tables_len; ++i) {
+		if (!(tables[i].id & flags) || !tables[i].enabled)
 			continue;
 
-        
+        tables[i].lock();
     }
 
-    return 0;
+    pr_err("acquired all locks...\n");
+    pr_err("start making all snapshots...\n");
+
+    for (int i = 0; i < tables_len; ++i) {
+		if (!(tables[i].id & flags) || !tables[i].enabled)
+			continue;
+
+		pr_err("snapshotting table: %d\n", tables[i].id);
+		ssht = tables[i].sshot_rtn(0);
+		if (unlikely(ssht == NULL)) {
+            ret = -ENOMEM;
+            break;
+		}
+
+		if (tables[i].sshts.len == max_snapshots)
+			snapshots_dequeue(&tables[i].sshts);
+
+		snapshots_enqueue(&tables[i].sshts, ssht);
+        pr_err("table snapshot done: %d\n", tables[i].id);
+    }
+
+    pr_err("start releasing all locsk...\n");
+    for (int i = 0; i < tables_len; ++i) {
+		if (!(tables[i].id & flags) || !tables[i].enabled)
+			continue;
+
+        tables[i].unlock();
+    }
+    pr_err("released all locks...\n");
+
+    return ret;
 }
