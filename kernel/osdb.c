@@ -432,25 +432,23 @@ SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column, struct osdb_value 
 {
 	struct cursor *p;
 	static struct osdb_value timestamp = { .type = OSDB_VALUE_INT, .len = sizeof(int64_t) };
-    struct osdb_value *value;
+	struct osdb_value *value;
 
     if (!capable(CAP_SYS_ADMIN))
 	    return -EPERM;
-
-    if (osdb_cursor_check(cursor)) {
-        pr_err("trying to access column %d with invalid cursor %d\n", column, cursor);
+    else if (!access_ok(out, sizeof(struct osdb_value)))
+	    return -EFAULT;
+    else if (osdb_cursor_check(cursor))
 	    return -EINVAL;
-    }
 
     p = cursors + cursor;
     if (column > tables[p->table].colnum) {
-        pr_err("trying to access column %d of a table with %d columns\n", column, tables[p->table].colnum + 1);
 	    return -EINVAL;
     } else if (tables[p->table].colnum == column) {
 	    timestamp.int_value = p->ssht->timestamp;
-        out = &timestamp;
+        value = &timestamp;
     } else {
-        out = p->ssht->data + p->row + column;
+        value = p->ssht->data + p->row + column;
     }
 
     if (copy_to_user(out, value, sizeof(struct osdb_value)))
@@ -467,8 +465,9 @@ SYSCALL_DEFINE3(osdb_value_ptr, int, cursor, int, column, struct osdb_value __us
 
     if (!capable(CAP_SYS_ADMIN))
 	    return -EPERM;
-
-    if (osdb_cursor_check(cursor))
+    else if (!access_ok(in, sizeof(struct osdb_value)))
+	    return -EFAULT;
+    else if (osdb_cursor_check(cursor))
 	    return -EINVAL;
 
     p = cursors + cursor;
@@ -478,10 +477,13 @@ SYSCALL_DEFINE3(osdb_value_ptr, int, cursor, int, column, struct osdb_value __us
     out = p->ssht->data + p->row + column;
     if (copy_from_user(&value, in, sizeof(struct osdb_value)))
 	    return -EFAULT;
-    if (out->type != OSDB_VALUE_TEXT)
-        return -EINVAL;
 
-    if (copy_to_user(value->ptr_value, out->ptr_value, value->len))
+    if (out->type != OSDB_VALUE_TEXT)
+	    return -EINVAL;
+    else if (!access_ok(value.ptr_value, value.len))
+        return -EFAULT;
+
+    if (copy_to_user(value.ptr_value, out->ptr_value, value.len))
 	    return -EFAULT;
 
     return 0;
