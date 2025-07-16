@@ -8,9 +8,9 @@
 
 
 enum osdb_value_tag {
-	OSDB_VALUE_INT,
-	OSDB_VALUE_TEXT,
-    OSDB_VALUE_NULL,
+	OSDB_VALUE_INT = 0x1,
+	OSDB_VALUE_TEXT = 0x2,
+    OSDB_VALUE_NULL = 0x3,
 };
 
 struct osdb_value {

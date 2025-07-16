@@ -428,20 +428,23 @@ SYSCALL_DEFINE1(osdb_vtable_eof, int, cursor)
     return list_entry_is_head(p->ssht, &tables[p->table].sshts.head, list);
 }
 
-SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column, struct osdb_value __user *, value)
+SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column, struct osdb_value __user *, out)
 {
 	struct cursor *p;
 	static struct osdb_value timestamp = { .type = OSDB_VALUE_INT, .len = sizeof(int64_t) };
-    struct osdb_value *out;
+    struct osdb_value *value;
 
     if (!capable(CAP_SYS_ADMIN))
 	    return -EPERM;
 
-    if (osdb_cursor_check(cursor))
+    if (osdb_cursor_check(cursor)) {
+        pr_err("trying to access column %d with invalid cursor %d\n", column, cursor);
 	    return -EINVAL;
+    }
 
     p = cursors + cursor;
-    if (tables[p->table].colnum > column) {
+    if (column > tables[p->table].colnum) {
+        pr_err("trying to access column %d of a table with %d columns\n", column, tables[p->table].colnum + 1);
 	    return -EINVAL;
     } else if (tables[p->table].colnum == column) {
 	    timestamp.int_value = p->ssht->timestamp;
@@ -450,17 +453,17 @@ SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column, struct osdb_value 
         out = p->ssht->data + p->row + column;
     }
 
-    if (copy_to_user(value, out, sizeof(struct osdb_value)))
+    if (copy_to_user(out, value, sizeof(struct osdb_value)))
 	    return -EFAULT;
 
     return 0;
 }
 
-SYSCALL_DEFINE3(osdb_value_ptr, int, cursor, int, column, struct osdb_value __user *, value)
+SYSCALL_DEFINE3(osdb_value_ptr, int, cursor, int, column, struct osdb_value __user *, in)
 {
 	struct cursor *p;
 	struct osdb_value *out;
-    struct osdb_value in;
+    struct osdb_value value;
 
     if (!capable(CAP_SYS_ADMIN))
 	    return -EPERM;
@@ -469,15 +472,17 @@ SYSCALL_DEFINE3(osdb_value_ptr, int, cursor, int, column, struct osdb_value __us
 	    return -EINVAL;
 
     p = cursors + cursor;
-    if (tables[p->table].colnum >= column)
+    if (column >= tables[p->table].colnum)
 	    return -EINVAL;
 
     out = p->ssht->data + p->row + column;
-    if (copy_from_user(&in, value, sizeof(struct osdb_value))) return -EFAULT;
+    if (copy_from_user(&value, in, sizeof(struct osdb_value)))
+	    return -EFAULT;
     if (out->type != OSDB_VALUE_TEXT)
         return -EINVAL;
 
-    if (copy_to_user(value->ptr_value, out->ptr_value, out->len)) return -EFAULT;
+    if (copy_to_user(value->ptr_value, out->ptr_value, value->len))
+	    return -EFAULT;
 
     return 0;
 }
