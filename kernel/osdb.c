@@ -1,5 +1,3 @@
-#include "asm-generic/errno-base.h"
-#include "linux/compiler.h"
 #include <linux/bitmap.h>
 #include <linux/errno.h>
 #include <linux/gfp_types.h>
@@ -166,14 +164,14 @@ static struct snapshot *process_snapshot(ktime_t timestamp)
         }
     }
 
-    pr_err("found %u processes...\n", count);
 
     bitmap_zero(bitset, PID_MAX_LIMIT + 1);
     ssht = kmalloc(sizeof(struct snapshot) + count*6 * sizeof(struct osdb_value), GFP_KERNEL);
     if (unlikely(ssht == NULL))
 	    goto end;
 
-    ssht->cap = count*6;
+    ssht->cap = count * 6;
+    ssht->len = 0;
 
     for_each_process(tsk) {
         pid = task_pid_nr(tsk);
@@ -200,7 +198,7 @@ static struct snapshot *process_snapshot(ktime_t timestamp)
 
 static void process_unlock(void)
 {
-    rcu_read_lock();
+    rcu_read_unlock();
 }
 
 
@@ -248,13 +246,14 @@ static int do_osdb_vtable_create(int flags)
     int i;
 
     for (i = 0; i < tables_len; ++i) {
-		if (!(flags & tables[i].id))
+		if (!(flags & tables[i].id)) {
 			continue;
-		else if (tables[i].enabled)
-			continue;
-
-		snapshots_init(&tables[i].sshts);
-		tables[i].enabled = 1;
+		} else if (tables[i].enabled) {
+            ++tables[i].enabled;
+        } else {
+            snapshots_init(&tables[i].sshts);
+            tables[i].enabled = 1;
+        }
 	}
 
     return 0;
@@ -263,8 +262,12 @@ static int do_osdb_vtable_create(int flags)
 static int do_osdb_vtable_destroy(int flags)
 {
 	for (int i = 0; i < tables_len; ++i) {
-		if (!(flags & tables[i].id) || !tables[i].enabled)
+		if (!(flags & tables[i].id) || tables[i].enabled == 0)
 			continue;
+
+		--tables[i].enabled;
+		if (--tables[i].enabled != 0)
+            continue;
 
 		while (tables[i].sshts.len > 0)
             snapshots_dequeue(&tables[i].sshts);
@@ -333,7 +336,7 @@ SYSCALL_DEFINE1(osdb_vtable_open, int, table)
 		return -EPERM;
 
 	for (i = 0; i < tables_len; ++i)
-		if (table & tables[i].id && tables[i].enabled)
+		if ((table & tables[i].id) && tables[i].enabled)
             break;
 
 	if (i == tables_len)
@@ -346,12 +349,11 @@ SYSCALL_DEFINE1(osdb_vtable_open, int, table)
     if (cur == cursors_len)
 	    return -ENOMEM;
 
-
     cursors[cur].reserved = 1;
     cursors[cur].table = i;
     osdb_cursor_reset(cur);
 
-    return 0;
+    return cur;
 }
 
 SYSCALL_DEFINE1(osdb_vtable_close, int, cursor)
@@ -403,9 +405,10 @@ SYSCALL_DEFINE1(osdb_vtable_next, int, cursor)
         if (!list_entry_is_head(p->ssht, head, list))
             ++p->rowid;
     } else {
-	    ++p->row;
+	    p->row += tables[p->table].colnum;
         ++p->rowid;
     }
+
 
     return 0;
 }
@@ -456,7 +459,6 @@ SYSCALL_DEFINE1(osdb_vtable_snapshot, int, flags)
     struct snapshot *ssht;
     int ret = 0;
 
-    pr_err("start acquiring all locks...\n");
     for (int i = 0; i < tables_len; ++i) {
 		if (!(tables[i].id & flags) || !tables[i].enabled)
 			continue;
@@ -464,14 +466,10 @@ SYSCALL_DEFINE1(osdb_vtable_snapshot, int, flags)
         tables[i].lock();
     }
 
-    pr_err("acquired all locks...\n");
-    pr_err("start making all snapshots...\n");
-
     for (int i = 0; i < tables_len; ++i) {
 		if (!(tables[i].id & flags) || !tables[i].enabled)
 			continue;
 
-		pr_err("snapshotting table: %d\n", tables[i].id);
 		ssht = tables[i].sshot_rtn(0);
 		if (unlikely(ssht == NULL)) {
             ret = -ENOMEM;
@@ -482,17 +480,14 @@ SYSCALL_DEFINE1(osdb_vtable_snapshot, int, flags)
 			snapshots_dequeue(&tables[i].sshts);
 
 		snapshots_enqueue(&tables[i].sshts, ssht);
-        pr_err("table snapshot done: %d\n", tables[i].id);
     }
 
-    pr_err("start releasing all locsk...\n");
     for (int i = 0; i < tables_len; ++i) {
 		if (!(tables[i].id & flags) || !tables[i].enabled)
 			continue;
 
         tables[i].unlock();
     }
-    pr_err("released all locks...\n");
 
     return ret;
 }
