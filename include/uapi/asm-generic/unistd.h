@@ -875,15 +875,17 @@ __SYSCALL(__NR_osdb_vtable_next, sys_osdb_vtable_next)
 __SYSCALL(__NR_osdb_vtable_eof, sys_osdb_vtable_eof)
 #define __NR_osdb_vtable_column 478
 __SYSCALL(__NR_osdb_vtable_column, sys_osdb_vtable_column)
-#define __NR_osdb_vtable_rowid 479
+#define __NR_osdb_value_ptr 479
+__SYSCALL(__NR_osdb_value_ptr, sys_osdb_value_ptr)
+#define __NR_osdb_vtable_rowid 480
 __SYSCALL(__NR_osdb_vtable_rowid, sys_osdb_vtable_rowid)
-#define __NR_osdb_vtable_update 480
+#define __NR_osdb_vtable_update 481
 __SYSCALL(__NR_osdb_vtable_update, sys_osdb_vtable_update)
-#define __NR_osdb_vtable_snapshot 481
+#define __NR_osdb_vtable_snapshot 482
 __SYSCALL(__NR_osdb_vtable_snapshot, sys_osdb_vtable_snapshot)
 
 #undef __NR_syscalls
-#define __NR_syscalls 482
+#define __NR_syscalls 483
 
 /*
  * 32 bit systems traditionally used different

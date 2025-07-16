@@ -14,7 +14,7 @@
 
 struct snapshot {
 	struct list_head list;
-    ktime_t timestamp;
+    int64_t timestamp;
     int len;
     int cap;
     struct osdb_value data[];
@@ -32,7 +32,7 @@ struct table {
 	struct snapshots sshts;
 	void (*lock)(void);
     void (*unlock)(void);
-    struct snapshot *(*sshot_rtn)(ktime_t);
+    struct snapshot *(*sshot_rtn)(int64_t);
 };
 
 struct cursor {
@@ -143,7 +143,7 @@ static inline int process_snapshot_task(struct snapshot *ssht, struct task_struc
     return 0;
 }
 
-static struct snapshot *process_snapshot(ktime_t timestamp)
+static struct snapshot *process_snapshot(int64_t timestamp)
 {
 	unsigned long *bitset;
 	struct task_struct *tsk;
@@ -428,9 +428,57 @@ SYSCALL_DEFINE1(osdb_vtable_eof, int, cursor)
     return list_entry_is_head(p->ssht, &tables[p->table].sshts.head, list);
 }
 
-SYSCALL_DEFINE1(osdb_vtable_column, struct osdb_vtable_column_args __user *, args)
+SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column, struct osdb_value __user *, value)
 {
-    // TODO implement
+	struct cursor *p;
+	static struct osdb_value timestamp = { .type = OSDB_VALUE_INT, .len = sizeof(int64_t) };
+    struct osdb_value *out;
+
+    if (!capable(CAP_SYS_ADMIN))
+	    return -EPERM;
+
+    if (osdb_cursor_check(cursor))
+	    return -EINVAL;
+
+    p = cursors + cursor;
+    if (tables[p->table].colnum > column) {
+	    return -EINVAL;
+    } else if (tables[p->table].colnum == column) {
+	    timestamp.int_value = p->ssht->timestamp;
+        out = &timestamp;
+    } else {
+        out = p->ssht->data + p->row + column;
+    }
+
+    if (copy_to_user(value, out, sizeof(struct osdb_value)))
+	    return -EFAULT;
+
+    return 0;
+}
+
+SYSCALL_DEFINE3(osdb_value_ptr, int, cursor, int, column, struct osdb_value __user *, value)
+{
+	struct cursor *p;
+	struct osdb_value *out;
+    struct osdb_value in;
+
+    if (!capable(CAP_SYS_ADMIN))
+	    return -EPERM;
+
+    if (osdb_cursor_check(cursor))
+	    return -EINVAL;
+
+    p = cursors + cursor;
+    if (tables[p->table].colnum >= column)
+	    return -EINVAL;
+
+    out = p->ssht->data + p->row + column;
+    if (copy_from_user(&in, value, sizeof(struct osdb_value))) return -EFAULT;
+    if (out->type != OSDB_VALUE_TEXT)
+        return -EINVAL;
+
+    if (copy_to_user(value->ptr_value, out->ptr_value, out->len)) return -EFAULT;
+
     return 0;
 }
 
@@ -454,7 +502,7 @@ SYSCALL_DEFINE1(osdb_vtable_update, struct osdb_vtable_update_args __user *, arg
     return 0;
 }
 
-SYSCALL_DEFINE1(osdb_vtable_snapshot, int, flags)
+SYSCALL_DEFINE2(osdb_vtable_snapshot, int, flags, long long, timestamp)
 {
     struct snapshot *ssht;
     int ret = 0;
@@ -470,7 +518,7 @@ SYSCALL_DEFINE1(osdb_vtable_snapshot, int, flags)
 		if (!(tables[i].id & flags) || !tables[i].enabled)
 			continue;
 
-		ssht = tables[i].sshot_rtn(0);
+		ssht = tables[i].sshot_rtn(timestamp);
 		if (unlikely(ssht == NULL)) {
             ret = -ENOMEM;
             break;

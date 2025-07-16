@@ -22,25 +22,8 @@ struct osdb_value {
     };
 };
 
-/* struct osdb_vtable_create_args { */
-/*     char name[64]; */
-/* }; */
-
-/* struct osdb_vtable_connect_args { */
-/*     char name[64]; */
-/* }; */
 
 struct osdb_vtable_bestindex_args {};
-//struct osdb_vtable_disconnect_args {};
-//struct osdb_vtable_destroy_args {};
-struct osdb_vtable_open_args {};
-struct osdb_vtable_close_args {};
-struct osdb_vtable_filter_args {};
-struct osdb_vtable_next_args {};
-struct osdb_vtable_eof_args {};
-struct osdb_vtable_column_args {};
-struct osdb_vtable_rowid_args {};
 struct osdb_vtable_update_args {};
-
 
 #endif
