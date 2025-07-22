@@ -4,6 +4,7 @@
 #include <linux/types.h>
 
 #define OSDB_PROCESS 0x1
+#define OSDB_NS      0x2
 
 enum osdb_value_tag {
 	OSDB_VALUE_INT = 0x1,

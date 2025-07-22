@@ -99,14 +99,23 @@ static void snapshot_free(struct snapshot *ssht)
 static void process_lock(void);
 static struct snapshot *process_snapshot(int64_t timestamp);
 static void process_unlock(void);
+static void ns_lock(void);
+static struct snapshot *ns_snapshot(int64_t timestamp);
+static void ns_unlock(void);
 
-static struct table tables[] = { {
-				  .id = OSDB_PROCESS,
-				  .enabled = 0,
-				  .colnum = 6,
-				  .lock = process_lock,
-				  .unlock = process_unlock,
-				  .sshot_rtn = process_snapshot},
+static struct table tables[] = {
+	{ .id = OSDB_PROCESS,
+      .enabled = 0,
+      .colnum = 15,
+      .lock = process_lock,
+      .unlock = process_unlock,
+      .sshot_rtn = process_snapshot },
+    { .id = OSDB_NS,
+      .enabled = 0,
+      .colnum = 2,
+      .lock = ns_lock,
+      .unlock = ns_unlock,
+      .sshot_rtn = ns_snapshot },
 };
 
 static int tables_len = sizeof(tables) / sizeof(struct table);
@@ -121,8 +130,8 @@ static void process_lock(void)
 	rcu_read_lock();
 }
 
-static inline void
-add_namespace(struct osdb_value *value, const struct ns_common *ns)
+static inline void add_namespace(struct osdb_value *value,
+				 const struct ns_common *ns)
 {
 	if (ns)
 		osdb_value_int_init(value, ns->inum);
@@ -134,7 +143,7 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 					struct task_struct *tsk)
 {
 	char name[TASK_COMM_LEN];
-    char *state = NULL;
+	char *state = NULL;
 	int err;
 
 	/* Recording the pid */
@@ -188,12 +197,12 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 	if (state) {
 		err = osdb_value_text_init(ssht->data + ssht->len, state);
 		if (unlikely(err))
-            return 1;
+			return 1;
 	} else {
-        osdb_value_null_init(ssht->data + ssht->len);
+		osdb_value_null_init(ssht->data + ssht->len);
 	}
-    ++ssht->len;
-    
+	++ssht->len;
+
 	/* Recording the ppid */
 	if (tsk->parent)
 		osdb_value_int_init(ssht->data + ssht->len,
@@ -202,23 +211,23 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 		osdb_value_null_init(ssht->data + ssht->len);
 	++ssht->len;
 
-    /* Recording the namespaces */
+	/* Recording the namespaces */
 	if (tsk->nsproxy) {
-        add_namespace(ssht->data, &tsk->nsproxy->uts_ns->ns);
+		add_namespace(ssht->data, &tsk->nsproxy->uts_ns->ns);
 		add_namespace(ssht->data + 1, &tsk->nsproxy->ipc_ns->ns);
 		add_namespace(ssht->data + 2,
-		    (struct ns_common *)tsk->nsproxy->mnt_ns);
+			      (struct ns_common *)tsk->nsproxy->mnt_ns);
 		add_namespace(ssht->data + 3,
-		    &tsk->nsproxy->pid_ns_for_children->ns);
+			      &tsk->nsproxy->pid_ns_for_children->ns);
 		add_namespace(ssht->data + 4, &tsk->nsproxy->time_ns->ns);
 		add_namespace(ssht->data + 5, &tsk->nsproxy->cgroup_ns->ns);
 		add_namespace(ssht->data + 6, &tsk->nsproxy->net_ns->ns);
 	} else {
-        for (int i = 0; i < 7; ++i)
+		for (int i = 0; i < 7; ++i)
 			osdb_value_null_init(ssht->data + i);
 	}
-    add_namespace(ssht->data + 7, &tsk->cred->user_ns->ns);
-    ssht->len += 8;
+	add_namespace(ssht->data + 7, &tsk->cred->user_ns->ns);
+	ssht->len += 8;
 
 	return 0;
 }
@@ -247,11 +256,11 @@ static struct snapshot *process_snapshot(int64_t timestamp)
 	bitmap_zero(bitset, PID_MAX_LIMIT + 1);
 	ssht =
 	    kmalloc(sizeof(struct snapshot) +
-		    count * 6 * sizeof(struct osdb_value), GFP_KERNEL);
+		    count * 15 * sizeof(struct osdb_value), GFP_KERNEL);
 	if (unlikely(ssht == NULL))
 		goto end;
 
-	ssht->cap = count * 6;
+	ssht->cap = count * 15;
 	ssht->len = 0;
 
 	for_each_process(tsk) {
@@ -282,6 +291,227 @@ static void process_unlock(void)
 	rcu_read_unlock();
 }
 
+/* Namespace routines */
+static void ns_lock(void)
+{
+	if (!tables[0].enabled)
+		rcu_read_lock();
+}
+
+static inline unsigned ns_count(unsigned long *bitset)
+{
+	unsigned count = 0;
+	struct task_struct *tsk;
+	struct net *net;
+
+	for_each_process(tsk) {
+		if (!tsk->nsproxy)
+			continue;
+
+		if (tsk->nsproxy->uts_ns
+		    && !test_bit(tsk->nsproxy->uts_ns->ns.inum, bitset)) {
+			set_bit(tsk->nsproxy->uts_ns->ns.inum, bitset);
+			++count;
+		}
+
+		if (tsk->nsproxy->ipc_ns
+		    && !test_bit(tsk->nsproxy->ipc_ns->ns.inum, bitset)) {
+			set_bit(tsk->nsproxy->ipc_ns->ns.inum, bitset);
+			++count;
+		}
+
+		if (tsk->nsproxy->mnt_ns
+		    && !test_bit(((struct ns_common *)tsk->nsproxy->mnt_ns)->
+				 inum, bitset)) {
+			set_bit(((struct ns_common *)tsk->nsproxy->mnt_ns)->
+				inum, bitset);
+			++count;
+		}
+
+		if (tsk->nsproxy->pid_ns_for_children
+		    && !test_bit(tsk->nsproxy->pid_ns_for_children->ns.inum,
+				 bitset)) {
+			set_bit(tsk->nsproxy->pid_ns_for_children->ns.inum,
+				bitset);
+			++count;
+		}
+
+		if (tsk->nsproxy->time_ns
+		    && !test_bit(tsk->nsproxy->time_ns->ns.inum, bitset)) {
+			set_bit(tsk->nsproxy->time_ns->ns.inum, bitset);
+			++count;
+		}
+
+		if (tsk->nsproxy->time_ns_for_children
+		    && !test_bit(tsk->nsproxy->time_ns_for_children->ns.inum,
+				 bitset)) {
+			set_bit(tsk->nsproxy->time_ns_for_children->ns.inum,
+				bitset);
+			++count;
+		}
+
+		if (tsk->nsproxy->cgroup_ns
+		    && !test_bit(tsk->nsproxy->cgroup_ns->ns.inum, bitset)) {
+			set_bit(tsk->nsproxy->cgroup_ns->ns.inum, bitset);
+			++count;
+		}
+
+		if (tsk->cred->user_ns
+		    && !test_bit(tsk->cred->user_ns->ns.inum, bitset)) {
+			set_bit(tsk->cred->user_ns->ns.inum, bitset);
+			++count;
+		}
+	}
+
+	for_each_net(net) {
+		if (!test_bit(net->ns.inum, bitset)) {
+			set_bit(net->ns.inum, bitset);
+			++count;
+		}
+	}
+
+	return count;
+}
+
+static int ns_snapshot_ns_common(struct snapshot *ssht, unsigned int inum,
+				 const char *type)
+{
+	/* Recording the inum */
+	osdb_value_int_init(ssht->data + ssht->len, inum);
+
+	/* Recording the type */
+	if (unlikely(osdb_value_text_init(ssht->data + 1, type) != 0))
+		return 1;
+	ssht->len += 2;
+
+	return 0;
+}
+
+static struct snapshot *ns_snapshot(int64_t timestamp)
+{
+	struct net *net;
+	unsigned long *bitset;
+	struct task_struct *tsk;
+	struct uts_namespace *uts_ns;
+	struct ipc_namespace *ipc_ns;
+	struct ns_common *mnt_ns;
+	struct pid_namespace *pid_ns;
+	struct time_namespace *time_ns;
+	struct cgroup_namespace *cgroup_ns;
+	struct user_namespace *user_ns;
+	unsigned count = 0;
+	struct snapshot *ssht;
+
+	bitset = bitmap_alloc(UINT_MAX + 1, GFP_KERNEL);
+	if (unlikely(bitset == NULL))
+		return NULL;
+
+	bitmap_zero(bitset, PID_MAX_LIMIT + 1);
+	count = ns_count(bitset);
+	bitmap_zero(bitset, UINT_MAX + 1);
+	ssht =
+	    kmalloc(sizeof(struct snapshot) +
+		    count * 2 * sizeof(struct osdb_value), GFP_KERNEL);
+	if (unlikely(ssht == NULL))
+		goto end;
+
+	ssht->cap = count * 2;
+	ssht->len = 0;
+
+	for_each_process(tsk) {
+		if (!tsk->nsproxy)
+			continue;
+
+		uts_ns = tsk->nsproxy->uts_ns;
+		if (uts_ns && !test_bit(uts_ns->ns.inum, bitset)) {
+			if (unlikely
+			    (ns_snapshot_ns_common(ssht, uts_ns->ns.inum, "uts")
+			     != 0))
+				goto error;
+		}
+
+		ipc_ns = tsk->nsproxy->ipc_ns;
+		if (ipc_ns && !test_bit(ipc_ns->ns.inum, bitset)) {
+			if (unlikely
+			    (ns_snapshot_ns_common(ssht, ipc_ns->ns.inum, "ipc")
+			     != 0))
+				goto error;
+		}
+
+		mnt_ns = (struct ns_common *)tsk->nsproxy->mnt_ns;
+		if (mnt_ns && !test_bit(mnt_ns->inum, bitset)) {
+			if (unlikely
+			    (ns_snapshot_ns_common(ssht, ipc_ns->ns.inum, "mnt")
+			     != 0))
+				goto error;
+		}
+
+		pid_ns = tsk->nsproxy->pid_ns_for_children;
+		if (mnt_ns && !test_bit(pid_ns->ns.inum, bitset)) {
+			if (unlikely
+			    (ns_snapshot_ns_common(ssht, pid_ns->ns.inum, "pid")
+			     != 0))
+				goto error;
+		}
+
+		time_ns = tsk->nsproxy->time_ns;
+		if (time_ns && !test_bit(time_ns->ns.inum, bitset)) {
+			if (unlikely
+			    (ns_snapshot_ns_common
+			     (ssht, time_ns->ns.inum, "time") != 0))
+				goto error;
+		}
+
+		time_ns = tsk->nsproxy->time_ns_for_children;
+		if (time_ns && !test_bit(time_ns->ns.inum, bitset)) {
+			if (unlikely
+			    (ns_snapshot_ns_common
+			     (ssht, time_ns->ns.inum, "time") != 0))
+				goto error;
+		}
+
+		cgroup_ns = tsk->nsproxy->cgroup_ns;
+		if (cgroup_ns && !test_bit(cgroup_ns->ns.inum, bitset)) {
+			if (unlikely
+			    (ns_snapshot_ns_common
+			     (ssht, cgroup_ns->ns.inum, "cgroup") != 0))
+				goto error;
+		}
+
+		user_ns = tsk->cred->user_ns;
+		if (user_ns && !test_bit(user_ns->ns.inum, bitset)) {
+			if (unlikely
+			    (ns_snapshot_ns_common
+			     (ssht, user_ns->ns.inum, "user") != 0))
+				goto error;
+		}
+	}
+
+	for_each_net(net) {
+		if (!test_bit(net->ns.inum, bitset)
+		    && unlikely(ns_snapshot_ns_common(ssht, net->ns.inum, "net")
+				!= 0))
+			goto error;
+	}
+
+	ssht->timestamp = timestamp;
+
+ end:
+	bitmap_free(bitset);
+	return ssht;
+
+ error:
+	snapshot_free(ssht);
+	bitmap_free(bitset);
+	return NULL;
+
+}
+
+static void ns_unlock(void)
+{
+	if (!tables[0].enabled)
+		rcu_read_unlock();
+}
 
 static inline void snapshots_init(struct snapshots *sshts)
 {
