@@ -106,7 +106,7 @@ static void ns_unlock(void);
 static struct table tables[] = {
 	{ .id = OSDB_PROCESS,
 	  .enabled = 0,
-	  .colnum = 7,
+	  .colnum = 15,
 	  .lock = process_lock,
 	  .unlock = process_unlock,
 	  .sshot_rtn = process_snapshot },
@@ -212,22 +212,22 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 	++ssht->len;
 
 	/* Recording the namespaces */
-	/* if (tsk->nsproxy) { */
-	/* 	add_namespace(ssht->data, &tsk->nsproxy->uts_ns->ns); */
-	/* 	add_namespace(ssht->data + 1, &tsk->nsproxy->ipc_ns->ns); */
-	/* 	add_namespace(ssht->data + 2, */
-	/* 		      (struct ns_common *)tsk->nsproxy->mnt_ns); */
-	/* 	add_namespace(ssht->data + 3, */
-	/* 		      &tsk->nsproxy->pid_ns_for_children->ns); */
-	/* 	add_namespace(ssht->data + 4, &tsk->nsproxy->time_ns->ns); */
-	/* 	add_namespace(ssht->data + 5, &tsk->nsproxy->cgroup_ns->ns); */
-	/* 	add_namespace(ssht->data + 6, &tsk->nsproxy->net_ns->ns); */
-	/* } else { */
-	/* 	for (int i = 0; i < 7; ++i) */
-	/* 		osdb_value_null_init(ssht->data + i); */
-	/* } */
-	/* add_namespace(ssht->data + 7, &tsk->cred->user_ns->ns); */
-	/* ssht->len += 8; */
+	if (tsk->nsproxy) {
+		add_namespace(ssht->data + ssht->len, &tsk->nsproxy->uts_ns->ns);
+		add_namespace(ssht->data + ssht->len + 1, &tsk->nsproxy->ipc_ns->ns);
+		add_namespace(ssht->data + ssht->len + 2,
+			      (struct ns_common *)tsk->nsproxy->mnt_ns);
+		add_namespace(ssht->data + ssht->len + 3,
+			      &tsk->nsproxy->pid_ns_for_children->ns);
+		add_namespace(ssht->data + ssht->len + 4, &tsk->nsproxy->time_ns->ns);
+		add_namespace(ssht->data + ssht->len + 5, &tsk->nsproxy->cgroup_ns->ns);
+		add_namespace(ssht->data + ssht->len + 6, &tsk->nsproxy->net_ns->ns);
+	} else {
+		for (int i = 0; i < 7; ++i)
+			osdb_value_null_init(ssht->data + ssht->len + i);
+	}
+	add_namespace(ssht->data + ssht->len + 7, &tsk->cred->user_ns->ns);
+	ssht->len += 8;
 
 	return 0;
 }
