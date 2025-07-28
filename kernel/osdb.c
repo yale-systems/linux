@@ -1,9 +1,18 @@
 #include <linux/bitmap.h>
 #include <linux/errno.h>
 #include <linux/gfp_types.h>
+#include <net/net_namespace.h>
 #include <linux/list.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/cgroup.h>
+#include <linux/ipc_namespace.h>
+#include <linux/net_namespace.h>
+#include <linux/time_namespace.h>
+#include <linux/utsname.h>
+#include <linux/ns_common.h>
+#include <linux/nsproxy.h>
+#include <linux/pid_namespace.h>
 #include <linux/string.h>
 #include <linux/syscalls.h>
 #include <linux/tty.h>
@@ -32,7 +41,7 @@ struct table {
 	struct snapshots sshts;
 	void (*lock)(void);
 	void (*unlock)(void);
-	struct snapshot *(*sshot_rtn) (int64_t);
+	struct snapshot *(*sshot_rtn) (const struct table *, int64_t);
 };
 
 struct cursor {
@@ -87,16 +96,56 @@ static void snapshot_free(struct snapshot *ssht)
 	kfree(ssht);
 }
 
+static void process_lock(void);
+static struct snapshot *process_snapshot(const struct table *table,
+					 int64_t timestamp);
+static void process_unlock(void);
+static void ns_lock(void);
+static struct snapshot *ns_snapshot(const struct table *table,
+				    int64_t timestamp);
+static void ns_unlock(void);
+
+static struct table tables[] = {
+	{.id = OSDB_PROCESS,
+	 .enabled = 0,
+	 .colnum = 15,
+	 .lock = process_lock,
+	 .unlock = process_unlock,
+	 .sshot_rtn = process_snapshot},
+	{.id = OSDB_NS,
+	 .enabled = 0,
+	 .colnum = 2,
+	 .lock = ns_lock,
+	 .unlock = ns_unlock,
+	 .sshot_rtn = ns_snapshot},
+};
+
+static int tables_len = sizeof(tables) / sizeof(struct table);
+static const int cursors_len = MAX_CURSORS;
+static struct cursor cursors[MAX_CURSORS] = { 0 };
+
+static const int max_snapshots = 5;
+
 /* Process routines */
 static void process_lock(void)
 {
 	rcu_read_lock();
 }
 
+static inline void add_namespace(struct osdb_value *value,
+				 const struct ns_common *ns)
+{
+	if (ns)
+		osdb_value_int_init(value, ns->inum);
+	else
+		osdb_value_null_init(value);
+}
+
 static inline int process_snapshot_task(struct snapshot *ssht,
 					struct task_struct *tsk)
 {
 	char name[TASK_COMM_LEN];
+	char *state = NULL;
 	int err;
 
 	/* Recording the pid */
@@ -130,6 +179,32 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 	}
 	++ssht->len;
 
+	/* Recording the state */
+	switch (tsk->__state) {
+	case TASK_UNINTERRUPTIBLE:
+	case TASK_INTERRUPTIBLE:
+		state = "WAITING";
+		break;
+	case TASK_STOPPED:
+		state = "STOPPED";
+		break;
+	case TASK_TRACED:
+		state = "TRACED";
+		break;
+	case TASK_RUNNING:
+		state = "RUNNING";
+		break;
+	}
+
+	if (state) {
+		err = osdb_value_text_init(ssht->data + ssht->len, state);
+		if (unlikely(err))
+			return 1;
+	} else {
+		osdb_value_null_init(ssht->data + ssht->len);
+	}
+	++ssht->len;
+
 	/* Recording the ppid */
 	if (tsk->parent)
 		osdb_value_int_init(ssht->data + ssht->len,
@@ -138,10 +213,34 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 		osdb_value_null_init(ssht->data + ssht->len);
 	++ssht->len;
 
+	/* Recording the namespaces */
+	if (tsk->nsproxy) {
+		add_namespace(ssht->data + ssht->len,
+			      &tsk->nsproxy->uts_ns->ns);
+		add_namespace(ssht->data + ssht->len + 1,
+			      &tsk->nsproxy->ipc_ns->ns);
+		add_namespace(ssht->data + ssht->len + 2,
+			      (struct ns_common *)tsk->nsproxy->mnt_ns);
+		add_namespace(ssht->data + ssht->len + 3,
+			      &tsk->nsproxy->pid_ns_for_children->ns);
+		add_namespace(ssht->data + ssht->len + 4,
+			      &tsk->nsproxy->time_ns->ns);
+		add_namespace(ssht->data + ssht->len + 5,
+			      &tsk->nsproxy->cgroup_ns->ns);
+		add_namespace(ssht->data + ssht->len + 6,
+			      &tsk->nsproxy->net_ns->ns);
+	} else {
+		for (int i = 0; i < 7; ++i)
+			osdb_value_null_init(ssht->data + ssht->len + i);
+	}
+	add_namespace(ssht->data + ssht->len + 7, &tsk->cred->user_ns->ns);
+	ssht->len += 8;
+
 	return 0;
 }
 
-static struct snapshot *process_snapshot(int64_t timestamp)
+static struct snapshot *process_snapshot(const struct table *table,
+					 int64_t timestamp)
 {
 	unsigned long *bitset;
 	struct task_struct *tsk;
@@ -165,11 +264,12 @@ static struct snapshot *process_snapshot(int64_t timestamp)
 	bitmap_zero(bitset, PID_MAX_LIMIT + 1);
 	ssht =
 	    kmalloc(sizeof(struct snapshot) +
-		    count * 6 * sizeof(struct osdb_value), GFP_KERNEL);
+		    count * table->colnum * sizeof(struct osdb_value),
+		    GFP_KERNEL);
 	if (unlikely(ssht == NULL))
 		goto end;
 
-	ssht->cap = count * 6;
+	ssht->cap = count * table->colnum;
 	ssht->len = 0;
 
 	for_each_process(tsk) {
@@ -200,20 +300,150 @@ static void process_unlock(void)
 	rcu_read_unlock();
 }
 
-static struct table tables[] = { {
-				  .id = OSDB_PROCESS,
-				  .enabled = 0,
-				  .colnum = 6,
-				  .lock = process_lock,
-				  .unlock = process_unlock,
-				  .sshot_rtn = process_snapshot},
-};
+/* Namespace routines */
+static void ns_lock(void)
+{
+	if (!tables[0].enabled)
+		rcu_read_lock();
+}
 
-static int tables_len = sizeof(tables) / sizeof(struct table);
-static const int cursors_len = MAX_CURSORS;
-static struct cursor cursors[MAX_CURSORS] = { 0 };
+static int ns_snapshot_ns_common(struct snapshot **ssht, unsigned int inum,
+				 const char *type)
+{
+	size_t i, new_cap;
+	struct snapshot *new_ssht;
 
-static const int max_snapshots = 5;
+	for (i = 0; i < (*ssht)->len; i += 2)
+		if ((*ssht)->data[i].int_value == inum)
+			return 0;
+
+	if ((*ssht)->len == (*ssht)->cap) {
+		new_cap = (*ssht)->cap * 2;
+		new_ssht = krealloc(*ssht, sizeof(struct snapshot) +
+				    new_cap * sizeof(struct osdb_value),
+				    GFP_KERNEL);
+		if (unlikely(new_ssht == NULL))
+			return 1;
+
+		new_ssht->cap = new_cap;
+		*ssht = new_ssht;
+	}
+
+	/* Recording the inum */
+	osdb_value_int_init((*ssht)->data + (*ssht)->len, inum);
+
+	/* Recording the type */
+	if (unlikely
+	    (osdb_value_text_init((*ssht)->data + (*ssht)->len + 1, type) != 0))
+		return 1;
+	(*ssht)->len += 2;
+
+	return 0;
+}
+
+static struct snapshot *ns_snapshot(const struct table *table,
+				    int64_t timestamp)
+{
+	struct net *net;
+	struct task_struct *tsk;
+	struct uts_namespace *uts_ns;
+	struct ipc_namespace *ipc_ns;
+	struct ns_common *mnt_ns;
+	struct pid_namespace *pid_ns;
+	struct time_namespace *time_ns;
+	struct cgroup_namespace *cgroup_ns;
+	struct user_namespace *user_ns;
+	struct snapshot *ssht;
+
+	ssht = kmalloc(sizeof(struct snapshot) +
+		       8 * table->colnum * sizeof(struct osdb_value),
+		       GFP_KERNEL);
+	if (unlikely(ssht == NULL))
+		return NULL;
+
+	ssht->cap = 8 * table->colnum;
+	ssht->len = 0;
+
+	for_each_process(tsk) {
+		if (!tsk->nsproxy)
+			continue;
+
+		uts_ns = tsk->nsproxy->uts_ns;
+		if (uts_ns
+		    &&
+		    unlikely(ns_snapshot_ns_common
+			     (&ssht, uts_ns->ns.inum, "uts") != 0))
+			goto error;
+
+		ipc_ns = tsk->nsproxy->ipc_ns;
+		if (ipc_ns
+		    &&
+		    unlikely(ns_snapshot_ns_common
+			     (&ssht, ipc_ns->ns.inum, "ipc") != 0))
+			goto error;
+
+		mnt_ns = (struct ns_common *)tsk->nsproxy->mnt_ns;
+		if (mnt_ns
+		    &&
+		    unlikely(ns_snapshot_ns_common(&ssht, mnt_ns->inum, "mnt")
+			     != 0))
+			goto error;
+
+		pid_ns = tsk->nsproxy->pid_ns_for_children;
+		if (mnt_ns
+		    &&
+		    unlikely(ns_snapshot_ns_common
+			     (&ssht, pid_ns->ns.inum, "pid") != 0))
+			goto error;
+
+		time_ns = tsk->nsproxy->time_ns;
+		if (time_ns
+		    &&
+		    unlikely(ns_snapshot_ns_common
+			     (&ssht, time_ns->ns.inum, "time") != 0))
+			goto error;
+
+		time_ns = tsk->nsproxy->time_ns_for_children;
+		if (time_ns
+		    &&
+		    unlikely(ns_snapshot_ns_common
+			     (&ssht, time_ns->ns.inum, "time") != 0))
+			goto error;
+
+		cgroup_ns = tsk->nsproxy->cgroup_ns;
+		if (cgroup_ns
+		    &&
+		    unlikely(ns_snapshot_ns_common
+			     (&ssht, cgroup_ns->ns.inum, "cgroup") != 0))
+			goto error;
+
+		user_ns = tsk->cred->user_ns;
+		if (user_ns
+		    &&
+		    unlikely(ns_snapshot_ns_common
+			     (&ssht, user_ns->ns.inum, "user") != 0))
+			goto error;
+	}
+
+	for_each_net(net) {
+		if (unlikely
+		    (ns_snapshot_ns_common(&ssht, net->ns.inum, "net") != 0))
+			goto error;
+	}
+
+	ssht->timestamp = timestamp;
+	return ssht;
+
+ error:
+	snapshot_free(ssht);
+	return NULL;
+}
+
+static void ns_unlock(void)
+{
+	if (!tables[0].enabled)
+		rcu_read_unlock();
+}
 
 static inline void snapshots_init(struct snapshots *sshts)
 {
@@ -392,19 +622,19 @@ SYSCALL_DEFINE1(osdb_vtable_next, int, cursor)
 		return -EINVAL;
 
 	p = cursors + cursor;
+
+	if (list_entry_is_head(p->ssht, head, list))
+		return 0;
+
+	p->row += tables[p->table].colnum;
 	if (p->ssht->len <= p->row) {
 		p->row = 0;
 		head = &tables[p->table].sshts.head;
-
-		do {
-			p->ssht = list_next_entry(p->ssht, list);
-		} while (!list_entry_is_head(p->ssht, head, list) &&
-			 p->ssht->len <= p->row);
+		p->ssht = list_next_entry(p->ssht, list);
 
 		if (!list_entry_is_head(p->ssht, head, list))
 			++p->rowid;
 	} else {
-		p->row += tables[p->table].colnum;
 		++p->rowid;
 	}
 
@@ -528,10 +758,15 @@ SYSCALL_DEFINE2(osdb_vtable_snapshot, int, flags, long long, timestamp)
 		if (!(tables[i].id & flags) || !tables[i].enabled)
 			continue;
 
-		ssht = tables[i].sshot_rtn(timestamp);
+		ssht = tables[i].sshot_rtn(tables + i, timestamp);
 		if (unlikely(ssht == NULL)) {
 			ret = -ENOMEM;
 			break;
+		}
+
+		if (ssht->len == 0) {
+			kfree(ssht);
+			continue;
 		}
 
 		if (tables[i].sshts.len == max_snapshots)
