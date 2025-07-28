@@ -77,7 +77,9 @@ struct cachestat_range;
 struct cachestat;
 struct statmount;
 struct mnt_id_req;
-struct xattr_args;
+struct osdb_vtable_bestindex_args;
+struct osdb_value;
+struct osdb_vtable_update_args;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -1213,6 +1215,24 @@ asmlinkage long sys_ni_syscall(void);
 #endif /* CONFIG_ARCH_HAS_SYSCALL_WRAPPER */
 
 asmlinkage long sys_ni_posix_timers(void);
+
+
+asmlinkage int sys_osdb_vtable_create(int flags);
+asmlinkage int sys_osdb_vtable_connect(int flags);
+asmlinkage int sys_osdb_vtable_bestindex(struct osdb_vtable_bestindex_args *args);
+asmlinkage int sys_osdb_vtable_disconnect(int flags);
+asmlinkage int sys_osdb_vtable_destroy(int flags);
+asmlinkage int sys_osdb_vtable_open(int table);
+asmlinkage int sys_osdb_vtable_close(int cursor);
+asmlinkage int sys_osdb_vtable_filter(int cursor);
+asmlinkage int sys_osdb_vtable_next(int cursor);
+asmlinkage int sys_osdb_vtable_eof(int cursor);
+asmlinkage int sys_osdb_vtable_column(int cursor, int column,
+				      struct osdb_value *out);
+asmlinkage int sys_osdb_value_ptr(int cursor, int column, struct osdb_value *out);
+asmlinkage long long sys_osdb_vtable_rowid(int cursor);
+asmlinkage int sys_osdb_vtable_update(struct osdb_vtable_update_args *args);
+asmlinkage int sys_osdb_vtable_snapshot(int flags, long long timestamp);
 
 /*
  * Kernel code should not call syscalls (i.e., sys_xyzyyz()) directly.
