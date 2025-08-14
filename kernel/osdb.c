@@ -26,7 +26,7 @@ struct snapshot {
 	int64_t timestamp;
 	int len;
 	int cap;
-	struct osdb_value data[];
+	struct dbsc_value data[];
 };
 
 struct snapshots {
@@ -36,7 +36,6 @@ struct snapshots {
 
 struct table {
 	int id;
-	int enabled;
 	int colnum;
 	struct snapshots sshts;
 	void (*lock)(void);
@@ -53,46 +52,46 @@ struct cursor {
 };
 
 /* OSDB value functions */
-static void osdb_value_int_init(struct osdb_value *value, int64_t val)
+static void dbsc_value_int_init(struct dbsc_value *value, int64_t val)
 {
-	value->type = OSDB_VALUE_INT;
-	value->len = sizeof(val);
-	value->int_value = val;
+	value->type = DBSC_INT64;
+	value->size = sizeof(val);
+	value->int64_value = val;
 }
 
-static int osdb_value_text_init(struct osdb_value *value, const char *text)
+static int dbsc_value_text_init(struct dbsc_value *value, const char *text)
 {
 	size_t n = strlen(text) + 1;
 
-	value->ptr_value = kmalloc(n, GFP_KERNEL);
-	if (unlikely(value->ptr_value == NULL))
+	value->text_value = kmalloc(n, GFP_KERNEL);
+	if (unlikely(value->text_value == NULL))
 		return 1;
 
-	value->type = OSDB_VALUE_TEXT;
-	value->len = n;
-	strcpy(value->ptr_value, text);
+	value->type = DBSC_TEXT;
+	value->size = n;
+	strcpy(value->text_value, text);
 
 	return 0;
 }
 
-static void osdb_value_null_init(struct osdb_value *value)
+static void dbsc_value_null_init(struct dbsc_value *value)
 {
-	value->type = OSDB_VALUE_NULL;
-	value->len = sizeof(NULL);
+	value->type = DBSC_NULL;
+	value->size = sizeof(NULL);
 	value->ptr_value = NULL;
 }
 
-static void osdb_value_free(struct osdb_value *value)
+static void dbsc_value_free(struct dbsc_value *value)
 {
-	if (value->type == OSDB_VALUE_TEXT)
-		kfree(value->ptr_value);
+	if (value->type == DBSC_TEXT)
+		kfree(value->text_value);
 }
 
 /* snapshot function */
 static void snapshot_free(struct snapshot *ssht)
 {
 	for (int i = 0; i < ssht->len; ++i)
-		osdb_value_free(ssht->data + i);
+		dbsc_value_free(ssht->data + i);
 	kfree(ssht);
 }
 
@@ -107,17 +106,23 @@ static void ns_unlock(void);
 
 static struct table tables[] = {
 	{.id = OSDB_PROCESS,
-	 .enabled = 0,
-	 .colnum = 15,
-	 .lock = process_lock,
-	 .unlock = process_unlock,
-	 .sshot_rtn = process_snapshot},
-	{.id = OSDB_NS,
-	 .enabled = 0,
-	 .colnum = 2,
-	 .lock = ns_lock,
-	 .unlock = ns_unlock,
-	 .sshot_rtn = ns_snapshot},
+     .colnum = 15,
+     .lock = process_lock,
+     .unlock = process_unlock,
+     .sshts = {
+         .len = 0,
+         .head = LIST_HEAD_INIT(tables[0].sshts. head),
+     },
+     .sshot_rtn = process_snapshot},
+    {.id = OSDB_NS,
+     .colnum = 2,
+     .sshts = {
+         .len = 0,
+         .head = LIST_HEAD_INIT(tables[1].sshts.head),
+     },
+     .lock = ns_lock,
+     .unlock = ns_unlock,
+     .sshot_rtn = ns_snapshot},
 };
 
 static int tables_len = sizeof(tables) / sizeof(struct table);
@@ -132,13 +137,13 @@ static void process_lock(void)
 	rcu_read_lock();
 }
 
-static inline void add_namespace(struct osdb_value *value,
+static inline void add_namespace(struct dbsc_value *value,
 				 const struct ns_common *ns)
 {
 	if (ns)
-		osdb_value_int_init(value, ns->inum);
+		dbsc_value_int_init(value, ns->inum);
 	else
-		osdb_value_null_init(value);
+		dbsc_value_null_init(value);
 }
 
 static inline int process_snapshot_task(struct snapshot *ssht,
@@ -149,33 +154,33 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 	int err;
 
 	/* Recording the pid */
-	osdb_value_int_init(ssht->data + ssht->len, task_pid_nr(tsk));
+	dbsc_value_int_init(ssht->data + ssht->len, task_pid_nr(tsk));
 	++ssht->len;
 
 	/* Recording the euid */
-	osdb_value_int_init(ssht->data + ssht->len, tsk->cred->euid.val);
+	dbsc_value_int_init(ssht->data + ssht->len, tsk->cred->euid.val);
 	++ssht->len;
 
 	/* Recording the gid */
-	osdb_value_int_init(ssht->data + ssht->len,
+	dbsc_value_int_init(ssht->data + ssht->len,
 			    pid_nr(get_task_pid(tsk, PIDTYPE_PGID)));
 	++ssht->len;
 
 	/* Recording the name */
 	get_task_comm(name, tsk);
-	err = osdb_value_text_init(ssht->data + ssht->len, name);
+	err = dbsc_value_text_init(ssht->data + ssht->len, name);
 	if (unlikely(err))
 		return 1;
 	++ssht->len;
 
 	/* Recording the tty */
 	if (tsk->signal->tty) {
-		err = osdb_value_text_init(ssht->data + ssht->len,
+		err = dbsc_value_text_init(ssht->data + ssht->len,
 					   tty_name(tsk->signal->tty));
 		if (unlikely(err))
 			return 1;
 	} else {
-		osdb_value_null_init(ssht->data + ssht->len);
+		dbsc_value_null_init(ssht->data + ssht->len);
 	}
 	++ssht->len;
 
@@ -197,20 +202,20 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 	}
 
 	if (state) {
-		err = osdb_value_text_init(ssht->data + ssht->len, state);
+		err = dbsc_value_text_init(ssht->data + ssht->len, state);
 		if (unlikely(err))
 			return 1;
 	} else {
-		osdb_value_null_init(ssht->data + ssht->len);
+		dbsc_value_null_init(ssht->data + ssht->len);
 	}
 	++ssht->len;
 
 	/* Recording the ppid */
 	if (tsk->parent)
-		osdb_value_int_init(ssht->data + ssht->len,
+		dbsc_value_int_init(ssht->data + ssht->len,
 				    task_pid_nr(tsk->parent));
 	else
-		osdb_value_null_init(ssht->data + ssht->len);
+		dbsc_value_null_init(ssht->data + ssht->len);
 	++ssht->len;
 
 	/* Recording the namespaces */
@@ -231,7 +236,7 @@ static inline int process_snapshot_task(struct snapshot *ssht,
 			      &tsk->nsproxy->net_ns->ns);
 	} else {
 		for (int i = 0; i < 7; ++i)
-			osdb_value_null_init(ssht->data + ssht->len + i);
+			dbsc_value_null_init(ssht->data + ssht->len + i);
 	}
 	add_namespace(ssht->data + ssht->len + 7, &tsk->cred->user_ns->ns);
 	ssht->len += 8;
@@ -264,7 +269,7 @@ static struct snapshot *process_snapshot(const struct table *table,
 	bitmap_zero(bitset, PID_MAX_LIMIT + 1);
 	ssht =
 	    kmalloc(sizeof(struct snapshot) +
-		    count * table->colnum * sizeof(struct osdb_value),
+		    count * table->colnum * sizeof(struct dbsc_value),
 		    GFP_KERNEL);
 	if (unlikely(ssht == NULL))
 		goto end;
@@ -303,8 +308,6 @@ static void process_unlock(void)
 /* Namespace routines */
 static void ns_lock(void)
 {
-	if (!tables[0].enabled)
-		rcu_read_lock();
 }
 
 static int ns_snapshot_ns_common(struct snapshot **ssht, unsigned int inum,
@@ -314,13 +317,13 @@ static int ns_snapshot_ns_common(struct snapshot **ssht, unsigned int inum,
 	struct snapshot *new_ssht;
 
 	for (i = 0; i < (*ssht)->len; i += 2)
-		if ((*ssht)->data[i].int_value == inum)
+		if ((*ssht)->data[i].int64_value == inum)
 			return 0;
 
 	if ((*ssht)->len == (*ssht)->cap) {
 		new_cap = (*ssht)->cap * 2;
 		new_ssht = krealloc(*ssht, sizeof(struct snapshot) +
-				    new_cap * sizeof(struct osdb_value),
+				    new_cap * sizeof(struct dbsc_value),
 				    GFP_KERNEL);
 		if (unlikely(new_ssht == NULL))
 			return 1;
@@ -330,11 +333,11 @@ static int ns_snapshot_ns_common(struct snapshot **ssht, unsigned int inum,
 	}
 
 	/* Recording the inum */
-	osdb_value_int_init((*ssht)->data + (*ssht)->len, inum);
+	dbsc_value_int_init((*ssht)->data + (*ssht)->len, inum);
 
 	/* Recording the type */
 	if (unlikely
-	    (osdb_value_text_init((*ssht)->data + (*ssht)->len + 1, type) != 0))
+	    (dbsc_value_text_init((*ssht)->data + (*ssht)->len + 1, type) != 0))
 		return 1;
 	(*ssht)->len += 2;
 
@@ -356,7 +359,7 @@ static struct snapshot *ns_snapshot(const struct table *table,
 	struct snapshot *ssht;
 
 	ssht = kmalloc(sizeof(struct snapshot) +
-		       8 * table->colnum * sizeof(struct osdb_value),
+		       8 * table->colnum * sizeof(struct dbsc_value),
 		       GFP_KERNEL);
 	if (unlikely(ssht == NULL))
 		return NULL;
@@ -441,14 +444,6 @@ static struct snapshot *ns_snapshot(const struct table *table,
 
 static void ns_unlock(void)
 {
-	if (!tables[0].enabled)
-		rcu_read_unlock();
-}
-
-static inline void snapshots_init(struct snapshots *sshts)
-{
-	INIT_LIST_HEAD(&sshts->head);
-	sshts->len = 0;
 }
 
 static void snapshots_dequeue(struct snapshots *sshts)
@@ -469,41 +464,6 @@ static inline void snapshots_enqueue(struct snapshots *sshts,
 }
 
 /* syscalls implementations */
-static int do_osdb_vtable_create(int flags)
-{
-	int i;
-
-	for (i = 0; i < tables_len; ++i) {
-		if (!(flags & tables[i].id)) {
-			continue;
-		} else if (tables[i].enabled) {
-			++tables[i].enabled;
-		} else {
-			snapshots_init(&tables[i].sshts);
-			tables[i].enabled = 1;
-		}
-	}
-
-	return 0;
-}
-
-static int do_osdb_vtable_destroy(int flags)
-{
-	for (int i = 0; i < tables_len; ++i) {
-		if (!(flags & tables[i].id) || tables[i].enabled == 0)
-			continue;
-
-		--tables[i].enabled;
-		if (--tables[i].enabled != 0)
-			continue;
-
-		while (tables[i].sshts.len > 0)
-			snapshots_dequeue(&tables[i].sshts);
-	}
-
-	return 0;
-}
-
 static inline int osdb_cursor_check(int cursor)
 {
 	return cursor < 0 || cursor >= cursors_len || !cursors[cursor].reserved;
@@ -519,42 +479,10 @@ static inline void osdb_cursor_reset(int cursor)
 	cursors[cursor].rowid = 0;
 }
 
-SYSCALL_DEFINE1(osdb_vtable_create, int, flags)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	return do_osdb_vtable_create(flags);
-}
-
-SYSCALL_DEFINE1(osdb_vtable_connect, int, flags)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	return do_osdb_vtable_create(flags);
-}
-
 SYSCALL_DEFINE1(osdb_vtable_bestindex,
 		struct osdb_vtable_bestindex_args __user *, args)
 {
 	return 0;
-}
-
-SYSCALL_DEFINE1(osdb_vtable_disconnect, int, flags)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	return do_osdb_vtable_destroy(flags);
-}
-
-SYSCALL_DEFINE1(osdb_vtable_destroy, int, flags)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	return do_osdb_vtable_destroy(flags);
 }
 
 SYSCALL_DEFINE1(osdb_vtable_open, int, table)
@@ -565,7 +493,7 @@ SYSCALL_DEFINE1(osdb_vtable_open, int, table)
 		return -EPERM;
 
 	for (i = 0; i < tables_len; ++i)
-		if ((table & tables[i].id) && tables[i].enabled)
+		if (table & tables[i].id)
 			break;
 
 	if (i == tables_len)
@@ -657,17 +585,18 @@ SYSCALL_DEFINE1(osdb_vtable_eof, int, cursor)
 }
 
 SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column,
-		struct osdb_value __user *, out)
+		struct dbsc_value __user *, out)
 {
 	struct cursor *p;
-	static struct osdb_value timestamp = {.type = OSDB_VALUE_INT,.len =
-		    sizeof(int64_t)
+	static struct dbsc_value timestamp = {
+		.type = DBSC_INT64,
+		.size = sizeof(int64_t),
 	};
-	struct osdb_value *value;
+	struct dbsc_value *value;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
-	else if (!access_ok(out, sizeof(struct osdb_value)))
+	else if (!access_ok(out, sizeof(struct dbsc_value)))
 		return -EFAULT;
 	else if (osdb_cursor_check(cursor))
 		return -EINVAL;
@@ -676,28 +605,28 @@ SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column,
 	if (column > tables[p->table].colnum) {
 		return -EINVAL;
 	} else if (tables[p->table].colnum == column) {
-		timestamp.int_value = p->ssht->timestamp;
+		timestamp.int64_value = p->ssht->timestamp;
 		value = &timestamp;
 	} else {
 		value = p->ssht->data + p->row + column;
 	}
 
-	if (copy_to_user(out, value, sizeof(struct osdb_value)))
+	if (copy_to_user(out, value, sizeof(struct dbsc_value)))
 		return -EFAULT;
 
 	return 0;
 }
 
-SYSCALL_DEFINE3(osdb_value_ptr, int, cursor, int, column,
-		struct osdb_value __user *, in)
+SYSCALL_DEFINE3(osdb_vtable_column_ptr, int, cursor, int, column,
+		struct dbsc_value __user *, in)
 {
 	struct cursor *p;
-	struct osdb_value *out;
-	struct osdb_value value;
+	struct dbsc_value *out;
+	struct dbsc_value value;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
-	else if (!access_ok(in, sizeof(struct osdb_value)))
+	else if (!access_ok(in, sizeof(struct dbsc_value)))
 		return -EFAULT;
 	else if (osdb_cursor_check(cursor))
 		return -EINVAL;
@@ -707,15 +636,15 @@ SYSCALL_DEFINE3(osdb_value_ptr, int, cursor, int, column,
 		return -EINVAL;
 
 	out = p->ssht->data + p->row + column;
-	if (copy_from_user(&value, in, sizeof(struct osdb_value)))
+	if (copy_from_user(&value, in, sizeof(struct dbsc_value)))
 		return -EFAULT;
 
-	if (out->type != OSDB_VALUE_TEXT)
+	if (out->type != DBSC_TEXT)
 		return -EINVAL;
-	else if (!access_ok(value.ptr_value, value.len))
+	else if (!access_ok(value.ptr_value, value.size))
 		return -EFAULT;
 
-	if (copy_to_user(value.ptr_value, out->ptr_value, value.len))
+	if (copy_to_user(value.ptr_value, out->ptr_value, value.size))
 		return -EFAULT;
 
 	return 0;
@@ -748,14 +677,14 @@ SYSCALL_DEFINE2(osdb_snapshot, int, flags, long long, timestamp)
 	int ret = 0;
 
 	for (int i = 0; i < tables_len; ++i) {
-		if (!(tables[i].id & flags) || !tables[i].enabled)
+		if (!(tables[i].id & flags))
 			continue;
 
 		tables[i].lock();
 	}
 
 	for (int i = 0; i < tables_len; ++i) {
-		if (!(tables[i].id & flags) || !tables[i].enabled)
+		if (!(tables[i].id & flags))
 			continue;
 
 		ssht = tables[i].sshot_rtn(tables + i, timestamp);
@@ -776,11 +705,31 @@ SYSCALL_DEFINE2(osdb_snapshot, int, flags, long long, timestamp)
 	}
 
 	for (int i = 0; i < tables_len; ++i) {
-		if (!(tables[i].id & flags) || !tables[i].enabled)
+		if (!(tables[i].id & flags))
 			continue;
 
 		tables[i].unlock();
 	}
 
 	return ret;
+}
+
+SYSCALL_DEFINE1(osdb_snapshot_clear, int, flags)
+{
+	for (int i = 0; i < tables_len; ++i) {
+		if (!(tables[i].id & flags))
+			continue;
+
+		while (tables[i].sshts.len > 0)
+			snapshots_dequeue(&tables[i].sshts);
+	}
+
+	for (int i = 0; i < cursors_len; ++i) {
+		if (!cursors[i].reserved || !(cursors[i].table & flags))
+			continue;
+
+		osdb_cursor_reset(i);
+	}
+
+	return 0;
 }

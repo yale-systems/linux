@@ -437,18 +437,16 @@
 # This is the end of the legacy x32 range.  Numbers 548 and above are
 # not special and are not to be used for x32-specific syscalls.
 
-548 common  osdb_vtable_create      sys_osdb_vtable_create
-549 common  osdb_vtable_connect     sys_osdb_vtable_connect
-550 common  osdb_vtable_bestindex   sys_osdb_vtable_bestindex
-551 common  osdb_vtable_disconnect  sys_osdb_vtable_disconnect
-552 common  osdb_vtable_destroy     sys_osdb_vtable_destroy
-553 common  osdb_vtable_open        sys_osdb_vtable_open
-554 common  osdb_vtable_close       sys_osdb_vtable_close
-555 common  osdb_vtable_filter      sys_osdb_vtable_filter
-556 common  osdb_vtable_next        sys_osdb_vtable_next
-557 common  osdb_vtable_eof         sys_osdb_vtable_eof
-558 common  osdb_vtable_column      sys_osdb_vtable_column
-559 common  osdb_value_ptr          sys_osdb_value_ptr
-560 common  osdb_vtable_rowid       sys_osdb_vtable_rowid
-561 common  osdb_vtable_update      sys_osdb_vtable_update
-562 common  osdb_snapshot    sys_osdb_snapshot
+
+548 common  osdb_vtable_bestindex   sys_osdb_vtable_bestindex
+549 common  osdb_vtable_open        sys_osdb_vtable_open
+550 common  osdb_vtable_close       sys_osdb_vtable_close
+551 common  osdb_vtable_filter      sys_osdb_vtable_filter
+552 common  osdb_vtable_next        sys_osdb_vtable_next
+553 common  osdb_vtable_eof         sys_osdb_vtable_eof
+554 common  osdb_vtable_column      sys_osdb_vtable_column
+555 common  osdb_vtable_column_ptr  sys_osdb_vtable_column_ptr
+556 common  osdb_vtable_rowid       sys_osdb_vtable_rowid
+557 common  osdb_vtable_update      sys_osdb_vtable_update
+558 common  osdb_snapshot           sys_osdb_snapshot
+559 common  osdb_snapshot_clear     sys_osdb_snapshot_clear

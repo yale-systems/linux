@@ -393,16 +393,15 @@ COND_SYSCALL(rseq);
 
 COND_SYSCALL(uretprobe);
 
-COND_SYSCALL(osdb_vtable_create);
-COND_SYSCALL(osdb_vtable_connect);
 COND_SYSCALL(osdb_vtable_bestindex);
-COND_SYSCALL(osdb_vtable_disconnect);
-COND_SYSCALL(osdb_vtable_destroy);
 COND_SYSCALL(osdb_vtable_open);
 COND_SYSCALL(osdb_vtable_close);
 COND_SYSCALL(osdb_vtable_filter);
 COND_SYSCALL(osdb_vtable_next);
 COND_SYSCALL(osdb_vtable_eof);
 COND_SYSCALL(osdb_vtable_column);
+COND_SYSCALL(osdb_vtable_column_ptr);
 COND_SYSCALL(osdb_vtable_rowid);
 COND_SYSCALL(osdb_vtable_update);
+COND_SYSCALL(osdb_snapshot);
+COND_SYSCALL(osdb_snapshot_clear);
