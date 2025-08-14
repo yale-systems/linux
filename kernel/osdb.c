@@ -742,7 +742,7 @@ SYSCALL_DEFINE1(osdb_vtable_update,
 	return 0;
 }
 
-SYSCALL_DEFINE2(osdb_vtable_snapshot, int, flags, long long, timestamp)
+SYSCALL_DEFINE2(osdb_snapshot, int, flags, long long, timestamp)
 {
 	struct snapshot *ssht;
 	int ret = 0;

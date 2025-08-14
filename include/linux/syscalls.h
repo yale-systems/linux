@@ -1232,7 +1232,7 @@ asmlinkage int sys_osdb_vtable_column(int cursor, int column,
 asmlinkage int sys_osdb_value_ptr(int cursor, int column, struct osdb_value *out);
 asmlinkage long long sys_osdb_vtable_rowid(int cursor);
 asmlinkage int sys_osdb_vtable_update(struct osdb_vtable_update_args *args);
-asmlinkage int sys_osdb_vtable_snapshot(int flags, long long timestamp);
+asmlinkage int sys_osdb_snapshot(int flags, long long timestamp);
 
 /*
  * Kernel code should not call syscalls (i.e., sys_xyzyyz()) directly.

@@ -881,8 +881,8 @@ __SYSCALL(__NR_osdb_value_ptr, sys_osdb_value_ptr)
 __SYSCALL(__NR_osdb_vtable_rowid, sys_osdb_vtable_rowid)
 #define __NR_osdb_vtable_update 481
 __SYSCALL(__NR_osdb_vtable_update, sys_osdb_vtable_update)
-#define __NR_osdb_vtable_snapshot 482
-__SYSCALL(__NR_osdb_vtable_snapshot, sys_osdb_vtable_snapshot)
+#define __NR_osdb_snapshot 482
+__SYSCALL(__NR_osdb_snapshot, sys_osdb_snapshot)
 
 #undef __NR_syscalls
 #define __NR_syscalls 483
