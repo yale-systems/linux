@@ -106,23 +106,23 @@ static void ns_unlock(void);
 
 static struct table tables[] = {
 	{.id = OSDB_PROCESS,
-     .colnum = 15,
-     .lock = process_lock,
-     .unlock = process_unlock,
-     .sshts = {
-         .len = 0,
-         .head = LIST_HEAD_INIT(tables[0].sshts. head),
-     },
-     .sshot_rtn = process_snapshot},
-    {.id = OSDB_NS,
-     .colnum = 2,
-     .sshts = {
-         .len = 0,
-         .head = LIST_HEAD_INIT(tables[1].sshts.head),
-     },
-     .lock = ns_lock,
-     .unlock = ns_unlock,
-     .sshot_rtn = ns_snapshot},
+	 .colnum = 15,
+	 .lock = process_lock,
+	 .unlock = process_unlock,
+	 .sshts = {
+		   .len = 0,
+		   .head = LIST_HEAD_INIT(tables[0].sshts.head),
+		   },
+	 .sshot_rtn = process_snapshot},
+	{.id = OSDB_NS,
+	 .colnum = 2,
+	 .sshts = {
+		   .len = 0,
+		   .head = LIST_HEAD_INIT(tables[1].sshts.head),
+		   },
+	 .lock = ns_lock,
+	 .unlock = ns_unlock,
+	 .sshot_rtn = ns_snapshot},
 };
 
 static int tables_len = sizeof(tables) / sizeof(struct table);
@@ -612,11 +612,11 @@ SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column,
 }
 
 SYSCALL_DEFINE4(osdb_vtable_column_ptr, int, cursor, int, column,
-                char __user *, buf, int, size)
+		char __user *, buf, int, size)
 {
 	struct cursor *p;
 	struct dbsc_value *out;
-    int len;
+	int len;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -630,11 +630,11 @@ SYSCALL_DEFINE4(osdb_vtable_column_ptr, int, cursor, int, column,
 		return -EINVAL;
 
 	out = p->ssht->data + p->row + column;
-    len = size < out->size ? size : out->size;
-    if (copy_to_user(buf, out->text_value, len))
+	len = size < out->size ? size : out->size;
+	if (copy_to_user(buf, out->text_value, len))
 		return -EFAULT;
 
-    return 0;
+	return 0;
 }
 
 SYSCALL_DEFINE1(osdb_vtable_rowid, int, cursor)
