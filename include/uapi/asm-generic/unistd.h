@@ -853,29 +853,25 @@ __SYSCALL(__NR_removexattrat, sys_removexattrat)
 __SYSCALL(__NR_open_tree_attr, sys_open_tree_attr)
 
 
-#define __NR_osdb_vtable_bestindex 468
-__SYSCALL(__NR_osdb_vtable_bestindex, sys_osdb_vtable_bestindex)
-#define __NR_osdb_vtable_open 469
+#define __NR_osdb_vtable_open 468
 __SYSCALL(__NR_osdb_vtable_open, sys_osdb_vtable_open)
-#define __NR_osdb_vtable_close 470
+#define __NR_osdb_vtable_close 469
 __SYSCALL(__NR_osdb_vtable_close, sys_osdb_vtable_close)
-#define __NR_osdb_vtable_filter 471
+#define __NR_osdb_vtable_filter 470
 __SYSCALL(__NR_osdb_vtable_filter, sys_osdb_vtable_filter)
-#define __NR_osdb_vtable_next 472
+#define __NR_osdb_vtable_next 471
 __SYSCALL(__NR_osdb_vtable_next, sys_osdb_vtable_next)
-#define __NR_osdb_vtable_eof 473
+#define __NR_osdb_vtable_eof 472
 __SYSCALL(__NR_osdb_vtable_eof, sys_osdb_vtable_eof)
-#define __NR_osdb_vtable_column 474
+#define __NR_osdb_vtable_column 473
 __SYSCALL(__NR_osdb_vtable_column, sys_osdb_vtable_column)
-#define __NR_osdb_vtable_column_ptr 475
+#define __NR_osdb_vtable_column_ptr 474
 __SYSCALL(__NR_osdb_vtable_column_ptr, sys_osdb_vtable_column_ptr)
-#define __NR_osdb_vtable_rowid 476
+#define __NR_osdb_vtable_rowid 475
 __SYSCALL(__NR_osdb_vtable_rowid, sys_osdb_vtable_rowid)
-#define __NR_osdb_vtable_update 477
-__SYSCALL(__NR_osdb_vtable_update, sys_osdb_vtable_update)
-#define __NR_osdb_snapshot 478
+#define __NR_osdb_snapshot 476
 __SYSCALL(__NR_osdb_snapshot, sys_osdb_snapshot)
-#define __NR_osdb_snapshot_clear 479
+#define __NR_osdb_snapshot_clear 477
 __SYSCALL(__NR_osdb_snapshot_clear, sys_osdb_snapshot_clear)
 
 #undef __NR_syscalls

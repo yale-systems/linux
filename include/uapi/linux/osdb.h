@@ -31,9 +31,4 @@ struct dbsc_value {
 	};
 };
 
-struct osdb_vtable_bestindex_args {
-};
-struct osdb_vtable_update_args {
-};
-
 #endif

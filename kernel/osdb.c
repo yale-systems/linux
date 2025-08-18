@@ -479,12 +479,6 @@ static inline void osdb_cursor_reset(int cursor)
 	cursors[cursor].rowid = 0;
 }
 
-SYSCALL_DEFINE1(osdb_vtable_bestindex,
-		struct osdb_vtable_bestindex_args __user *, args)
-{
-	return 0;
-}
-
 SYSCALL_DEFINE1(osdb_vtable_open, int, table)
 {
 	int i, cur;
@@ -493,7 +487,7 @@ SYSCALL_DEFINE1(osdb_vtable_open, int, table)
 		return -EPERM;
 
 	for (i = 0; i < tables_len; ++i)
-		if (table & tables[i].id)
+		if (table == tables[i].id)
 			break;
 
 	if (i == tables_len)
@@ -617,16 +611,16 @@ SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column,
 	return 0;
 }
 
-SYSCALL_DEFINE3(osdb_vtable_column_ptr, int, cursor, int, column,
-		struct dbsc_value __user *, in)
+SYSCALL_DEFINE4(osdb_vtable_column_ptr, int, cursor, int, column,
+                char __user *, buf, int, size)
 {
 	struct cursor *p;
 	struct dbsc_value *out;
-	struct dbsc_value value;
+    int len;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
-	else if (!access_ok(in, sizeof(struct dbsc_value)))
+	else if (!access_ok(buf, size))
 		return -EFAULT;
 	else if (osdb_cursor_check(cursor))
 		return -EINVAL;
@@ -636,18 +630,11 @@ SYSCALL_DEFINE3(osdb_vtable_column_ptr, int, cursor, int, column,
 		return -EINVAL;
 
 	out = p->ssht->data + p->row + column;
-	if (copy_from_user(&value, in, sizeof(struct dbsc_value)))
+    len = size < out->size ? size : out->size;
+    if (copy_to_user(buf, out->text_value, len))
 		return -EFAULT;
 
-	if (out->type != DBSC_TEXT)
-		return -EINVAL;
-	else if (!access_ok(value.ptr_value, value.size))
-		return -EFAULT;
-
-	if (copy_to_user(value.ptr_value, out->ptr_value, value.size))
-		return -EFAULT;
-
-	return 0;
+    return 0;
 }
 
 SYSCALL_DEFINE1(osdb_vtable_rowid, int, cursor)
@@ -663,12 +650,6 @@ SYSCALL_DEFINE1(osdb_vtable_rowid, int, cursor)
 	p = cursors + cursor;
 
 	return p->rowid;
-}
-
-SYSCALL_DEFINE1(osdb_vtable_update,
-		struct osdb_vtable_update_args __user *, args)
-{
-	return 0;
 }
 
 SYSCALL_DEFINE2(osdb_snapshot, int, flags, long long, timestamp)
