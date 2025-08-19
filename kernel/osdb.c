@@ -46,7 +46,7 @@ struct table {
 struct cursor {
 	int row;
 	int table;
-	long long rowid;
+	int64_t rowid;
 	int reserved;
 	struct snapshot *ssht;
 };
