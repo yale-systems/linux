@@ -651,12 +651,25 @@ static void filter_free(struct filter *filter)
 	filter->len = 0;
 }
 
-static int filter_match(struct filter *filter, const struct dbsc_value *row)
+static int filter_match(struct filter *filter, struct cursor *cursor)
 {
 	int match = 1;
+	static struct dbsc_value timestamp = {
+		.type = DBSC_INT64,
+		.size = sizeof(int64_t),
+	};
+	int column;
 
 	for (int i = 0; i < filter->len; ++i) {
-		const struct dbsc_value *value = row + filter->cond[i].column;
+		const struct dbsc_value *value;
+		column = filter->cond[i].column;
+
+		if (tables[cursor->table].colnum == column) {
+			timestamp.int64_value = cursor->ssht->timestamp;
+			value = &timestamp;
+		} else {
+			value = cursor->ssht->data + cursor->row + column;
+		}
 
 		switch (filter->cond[i].op) {
 		case FILTER_EQ:
@@ -730,11 +743,8 @@ static void osdb_cursor_next(struct cursor *cursor)
 
 static void osdb_cursor_advance(struct cursor *cursor)
 {
-	const struct dbsc_value *row;
-
 	while (!osdb_cursor_end(cursor)) {
-		row = cursor->ssht->data + cursor->row;
-		if (filter_match(&cursor->filter, row))
+		if (filter_match(&cursor->filter, cursor))
 			break;
 
 		osdb_cursor_next(cursor);
@@ -955,7 +965,7 @@ SYSCALL_DEFINE4(osdb_vtable_column_ptr, int, cursor, int, column, char __user *,
 	return 0;
 }
 
-SYSCALL_DEFINE1(osdb_vtable_rowid, int, cursor)
+SYSCALL_DEFINE2(osdb_vtable_rowid, int, cursor, int64_t __user *, rowid)
 {
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -963,7 +973,10 @@ SYSCALL_DEFINE1(osdb_vtable_rowid, int, cursor)
 	if (osdb_cursor_check(cursor))
 		return -EINVAL;
 
-	return cursors[cursor].rowid;
+	if (copy_to_user(rowid, &cursors[cursor].rowid, sizeof(int64_t)))
+		return -EFAULT;
+
+	return 0;
 }
 
 SYSCALL_DEFINE2(osdb_snapshot, int, flags, long long, timestamp)

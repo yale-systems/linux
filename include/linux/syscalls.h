@@ -1224,7 +1224,7 @@ asmlinkage int sys_osdb_vtable_eof(int cursor);
 asmlinkage int sys_osdb_vtable_column(int cursor, int column,
 				      struct dbsc_value *out);
 asmlinkage int sys_osdb_vtable_column_ptr(int cursor, int column, char *buf, int size);
-asmlinkage int64_t sys_osdb_vtable_rowid(int cursor);
+asmlinkage int sys_osdb_vtable_rowid(int cursor, int64_t *rowid);
 asmlinkage int sys_osdb_snapshot(int flags, long long timestamp);
 asmlinkage int sys_osdb_snapshot_clear(int flags);
 
