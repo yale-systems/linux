@@ -1218,7 +1218,7 @@ asmlinkage long sys_ni_posix_timers(void);
 
 asmlinkage int sys_osdb_vtable_open(int table);
 asmlinkage int sys_osdb_vtable_close(int cursor);
-asmlinkage int sys_osdb_vtable_filter(int cursor);
+asmlinkage int sys_osdb_vtable_filter(int cursor, const char *filter, int len, int argc, struct dbsc_value *argv);
 asmlinkage int sys_osdb_vtable_next(int cursor);
 asmlinkage int sys_osdb_vtable_eof(int cursor);
 asmlinkage int sys_osdb_vtable_column(int cursor, int column,

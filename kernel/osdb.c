@@ -40,11 +40,31 @@ struct table {
 	struct snapshots sshts;
 	void (*lock)(void);
 	void (*unlock)(void);
-	struct snapshot *(*sshot_rtn) (const struct table *, int64_t);
+	struct snapshot *(*sshot_rtn)(const struct table *, int64_t);
+};
+
+enum filter_op_t {
+	FILTER_EQ,
+	FILTER_GE,
+	FILTER_GT,
+	FILTER_LT,
+	FILTER_LE,
+};
+
+struct condition {
+	int column;
+	enum filter_op_t op;
+};
+
+struct filter {
+	struct condition *cond;
+	struct dbsc_value *values;
+	int len;
 };
 
 struct cursor {
 	int row;
+	struct filter filter;
 	int table;
 	int64_t rowid;
 	int reserved;
@@ -85,6 +105,111 @@ static void dbsc_value_free(struct dbsc_value *value)
 {
 	if (value->type == DBSC_TEXT)
 		kfree(value->text_value);
+}
+
+static int dbsc_value_eq(const struct dbsc_value *a, const struct dbsc_value *b)
+{
+	if (a->type != b->type)
+		return 0;
+
+	switch (a->type) {
+	case DBSC_BOOLEAN:
+	case DBSC_INT32:
+		return a->int32_value == b->int32_value;
+
+	case DBSC_INT64:
+		return a->int64_value == b->int64_value;
+
+	case DBSC_TEXT:
+		return strcmp(a->text_value, b->text_value) == 0;
+
+	default:
+		return 0;
+	}
+}
+
+static int dbsc_value_ge(const struct dbsc_value *a, const struct dbsc_value *b)
+{
+	if (a->type != b->type)
+		return 0;
+
+	switch (a->type) {
+	case DBSC_BOOLEAN:
+	case DBSC_INT32:
+		return a->int32_value >= b->int32_value;
+
+	case DBSC_INT64:
+		return a->int64_value >= b->int64_value;
+
+	case DBSC_TEXT:
+		return strcmp(a->text_value, b->text_value) >= 0;
+
+	default:
+		return 0;
+	}
+}
+
+static int dbsc_value_gt(const struct dbsc_value *a, const struct dbsc_value *b)
+{
+	if (a->type != b->type)
+		return 0;
+
+	switch (a->type) {
+	case DBSC_BOOLEAN:
+	case DBSC_INT32:
+		return a->int32_value > b->int32_value;
+
+	case DBSC_INT64:
+		return a->int64_value > b->int64_value;
+
+	case DBSC_TEXT:
+		return strcmp(a->text_value, b->text_value) > 0;
+
+	default:
+		return 0;
+	}
+}
+
+static int dbsc_value_le(const struct dbsc_value *a, const struct dbsc_value *b)
+{
+	if (a->type != b->type)
+		return 0;
+
+	switch (a->type) {
+	case DBSC_BOOLEAN:
+	case DBSC_INT32:
+		return a->int32_value < b->int32_value;
+
+	case DBSC_INT64:
+		return a->int64_value < b->int64_value;
+
+	case DBSC_TEXT:
+		return strcmp(a->text_value, b->text_value) < 0;
+
+	default:
+		return 0;
+	}
+}
+
+static int dbsc_value_lt(const struct dbsc_value *a, const struct dbsc_value *b)
+{
+	if (a->type != b->type)
+		return 0;
+
+	switch (a->type) {
+	case DBSC_BOOLEAN:
+	case DBSC_INT32:
+		return a->int32_value <= b->int32_value;
+
+	case DBSC_INT64:
+		return a->int64_value <= b->int64_value;
+
+	case DBSC_TEXT:
+		return strcmp(a->text_value, b->text_value) <= 0;
+
+	default:
+		return 0;
+	}
 }
 
 /* snapshot function */
@@ -267,10 +392,10 @@ static struct snapshot *process_snapshot(const struct table *table,
 	}
 
 	bitmap_zero(bitset, PID_MAX_LIMIT + 1);
-	ssht =
-	    kmalloc(sizeof(struct snapshot) +
-		    count * table->colnum * sizeof(struct dbsc_value),
-		    GFP_KERNEL);
+	ssht = kmalloc(sizeof(struct snapshot) +
+			       count * table->colnum *
+				       sizeof(struct dbsc_value),
+		       GFP_KERNEL);
 	if (unlikely(ssht == NULL))
 		goto end;
 
@@ -290,11 +415,11 @@ static struct snapshot *process_snapshot(const struct table *table,
 
 	ssht->timestamp = timestamp;
 
- end:
+end:
 	bitmap_free(bitset);
 	return ssht;
 
- error:
+error:
 	snapshot_free(ssht);
 	bitmap_free(bitset);
 	return NULL;
@@ -322,8 +447,9 @@ static int ns_snapshot_ns_common(struct snapshot **ssht, unsigned int inum,
 
 	if ((*ssht)->len == (*ssht)->cap) {
 		new_cap = (*ssht)->cap * 2;
-		new_ssht = krealloc(*ssht, sizeof(struct snapshot) +
-				    new_cap * sizeof(struct dbsc_value),
+		new_ssht = krealloc(*ssht,
+				    sizeof(struct snapshot) +
+					    new_cap * sizeof(struct dbsc_value),
 				    GFP_KERNEL);
 		if (unlikely(new_ssht == NULL))
 			return 1;
@@ -336,8 +462,8 @@ static int ns_snapshot_ns_common(struct snapshot **ssht, unsigned int inum,
 	dbsc_value_int_init((*ssht)->data + (*ssht)->len, inum);
 
 	/* Recording the type */
-	if (unlikely
-	    (dbsc_value_text_init((*ssht)->data + (*ssht)->len + 1, type) != 0))
+	if (unlikely(dbsc_value_text_init((*ssht)->data + (*ssht)->len + 1,
+					  type) != 0))
 		return 1;
 	(*ssht)->len += 2;
 
@@ -359,7 +485,7 @@ static struct snapshot *ns_snapshot(const struct table *table,
 	struct snapshot *ssht;
 
 	ssht = kmalloc(sizeof(struct snapshot) +
-		       8 * table->colnum * sizeof(struct dbsc_value),
+			       8 * table->colnum * sizeof(struct dbsc_value),
 		       GFP_KERNEL);
 	if (unlikely(ssht == NULL))
 		return NULL;
@@ -372,72 +498,64 @@ static struct snapshot *ns_snapshot(const struct table *table,
 			continue;
 
 		uts_ns = tsk->nsproxy->uts_ns;
-		if (uts_ns
-		    &&
-		    unlikely(ns_snapshot_ns_common
-			     (&ssht, uts_ns->ns.inum, "uts") != 0))
+		if (uts_ns &&
+		    unlikely(ns_snapshot_ns_common(&ssht, uts_ns->ns.inum,
+						   "uts") != 0))
 			goto error;
 
 		ipc_ns = tsk->nsproxy->ipc_ns;
-		if (ipc_ns
-		    &&
-		    unlikely(ns_snapshot_ns_common
-			     (&ssht, ipc_ns->ns.inum, "ipc") != 0))
+		if (ipc_ns &&
+		    unlikely(ns_snapshot_ns_common(&ssht, ipc_ns->ns.inum,
+						   "ipc") != 0))
 			goto error;
 
 		mnt_ns = (struct ns_common *)tsk->nsproxy->mnt_ns;
-		if (mnt_ns
-		    &&
-		    unlikely(ns_snapshot_ns_common(&ssht, mnt_ns->inum, "mnt")
-			     != 0))
+		if (mnt_ns &&
+		    unlikely(ns_snapshot_ns_common(&ssht, mnt_ns->inum,
+						   "mnt") != 0))
 			goto error;
 
 		pid_ns = tsk->nsproxy->pid_ns_for_children;
-		if (mnt_ns
-		    &&
-		    unlikely(ns_snapshot_ns_common
-			     (&ssht, pid_ns->ns.inum, "pid") != 0))
+		if (mnt_ns &&
+		    unlikely(ns_snapshot_ns_common(&ssht, pid_ns->ns.inum,
+						   "pid") != 0))
 			goto error;
 
 		time_ns = tsk->nsproxy->time_ns;
-		if (time_ns
-		    &&
-		    unlikely(ns_snapshot_ns_common
-			     (&ssht, time_ns->ns.inum, "time") != 0))
+		if (time_ns &&
+		    unlikely(ns_snapshot_ns_common(&ssht, time_ns->ns.inum,
+						   "time") != 0))
 			goto error;
 
 		time_ns = tsk->nsproxy->time_ns_for_children;
-		if (time_ns
-		    &&
-		    unlikely(ns_snapshot_ns_common
-			     (&ssht, time_ns->ns.inum, "time") != 0))
+		if (time_ns &&
+		    unlikely(ns_snapshot_ns_common(&ssht, time_ns->ns.inum,
+						   "time") != 0))
 			goto error;
 
 		cgroup_ns = tsk->nsproxy->cgroup_ns;
-		if (cgroup_ns
-		    &&
-		    unlikely(ns_snapshot_ns_common
-			     (&ssht, cgroup_ns->ns.inum, "cgroup") != 0))
+		if (cgroup_ns &&
+		    unlikely(ns_snapshot_ns_common(&ssht, cgroup_ns->ns.inum,
+						   "cgroup") != 0))
 			goto error;
 
 		user_ns = tsk->cred->user_ns;
-		if (user_ns
-		    &&
-		    unlikely(ns_snapshot_ns_common
-			     (&ssht, user_ns->ns.inum, "user") != 0))
+		if (user_ns &&
+		    unlikely(ns_snapshot_ns_common(&ssht, user_ns->ns.inum,
+						   "user") != 0))
 			goto error;
 	}
 
 	for_each_net(net) {
-		if (unlikely
-		    (ns_snapshot_ns_common(&ssht, net->ns.inum, "net") != 0))
+		if (unlikely(ns_snapshot_ns_common(&ssht, net->ns.inum,
+						   "net") != 0))
 			goto error;
 	}
 
 	ssht->timestamp = timestamp;
 	return ssht;
 
- error:
+error:
 	snapshot_free(ssht);
 	return NULL;
 }
@@ -446,6 +564,7 @@ static void ns_unlock(void)
 {
 }
 
+/* Snapshot queue routines */
 static void snapshots_dequeue(struct snapshots *sshts)
 {
 	struct snapshot *head;
@@ -463,7 +582,113 @@ static inline void snapshots_enqueue(struct snapshots *sshts,
 	++sshts->len;
 }
 
-/* syscalls implementations */
+/* filter routines */
+static int filter_init(struct filter *filter, const char *ops, int len,
+		       struct dbsc_value *values)
+{
+	struct condition *cond;
+
+	cond = kmalloc(sizeof(struct condition) * len, GFP_KERNEL);
+	if (cond == NULL)
+		return -ENOMEM;
+
+	for (int i = 0; i < len; ++i) {
+		enum filter_op_t op;
+		int column = 0;
+
+		if (strncmp(ops, "EQ", 2) == 0)
+			op = FILTER_EQ;
+		else if (strncmp(ops, "GE", 2) == 0)
+			op = FILTER_GE;
+		else if (strncmp(ops, "GT", 2) == 0)
+			op = FILTER_GT;
+		else if (strncmp(ops, "LE", 2) == 0)
+			op = FILTER_LE;
+		else if (strncmp(ops, "LT", 2) == 0)
+			op = FILTER_LT;
+		else
+			goto error;
+
+		ops += 2;
+		if (*ops != ':')
+			goto error;
+		++ops;
+
+		if (!isdigit(*ops))
+			goto error;
+
+		for (; isdigit(*ops); ++ops)
+			column = 10 * column + *ops - '0';
+		if (*ops == ',')
+			++ops;
+
+		cond[i].op = op;
+		cond[i].column = column;
+	}
+
+	if (*ops != '\0')
+		goto error;
+
+	filter->cond = cond;
+	filter->values = values;
+	filter->len = len;
+	return 0;
+
+error:
+	kfree(cond);
+	return -EINVAL;
+}
+
+static void filter_free(struct filter *filter)
+{
+	for (int i = 0; i < filter->len; ++i)
+		dbsc_value_free(filter->values + i);
+
+	kfree(filter->values);
+	kfree(filter->cond);
+	filter->cond = NULL;
+	filter->values = NULL;
+	filter->len = 0;
+}
+
+static int filter_match(struct filter *filter, const struct dbsc_value *row)
+{
+	int match = 1;
+
+	for (int i = 0; i < filter->len; ++i) {
+		const struct dbsc_value *value = row + filter->cond[i].column;
+
+		switch (filter->cond[i].op) {
+		case FILTER_EQ:
+			match = dbsc_value_eq(value, filter->values + i);
+			break;
+
+		case FILTER_GE:
+			match = dbsc_value_ge(value, filter->values + i);
+			break;
+
+		case FILTER_GT:
+			match = dbsc_value_gt(value, filter->values + i);
+			break;
+
+		case FILTER_LE:
+			match = dbsc_value_le(value, filter->values + i);
+			break;
+
+		case FILTER_LT:
+			match = dbsc_value_lt(value, filter->values + i);
+			return 1;
+			break;
+		}
+
+		if (!match)
+			break;
+	}
+
+	return match;
+}
+
+/* Cursor routines */
 static inline int osdb_cursor_check(int cursor)
 {
 	return cursor < 0 || cursor >= cursors_len || !cursors[cursor].reserved;
@@ -473,10 +698,47 @@ static inline void osdb_cursor_reset(int cursor)
 {
 	int table = cursors[cursor].table;
 
-	cursors[cursor].ssht =
-	    list_first_entry(&tables[table].sshts.head, struct snapshot, list);
+	cursors[cursor].ssht = list_first_entry(&tables[table].sshts.head,
+						struct snapshot, list);
 	cursors[cursor].row = 0;
 	cursors[cursor].rowid = 0;
+}
+
+static inline int osdb_cursor_end(struct cursor *cursor)
+{
+	struct list_head *head = &tables[cursor->table].sshts.head;
+
+	return list_entry_is_head(cursor->ssht, head, list);
+}
+
+static void osdb_cursor_next(struct cursor *cursor)
+{
+	if (osdb_cursor_end(cursor))
+		return;
+
+	cursor->row += tables[cursor->table].colnum;
+	if (cursor->ssht->len <= cursor->row) {
+		cursor->row = 0;
+		cursor->ssht = list_next_entry(cursor->ssht, list);
+
+		if (!osdb_cursor_end(cursor))
+			++cursor->rowid;
+	} else {
+		++cursor->rowid;
+	}
+}
+
+static void osdb_cursor_advance(struct cursor *cursor)
+{
+	const struct dbsc_value *row;
+
+	while (!osdb_cursor_end(cursor)) {
+		row = cursor->ssht->data + cursor->row;
+		if (filter_match(&cursor->filter, row))
+			break;
+
+		osdb_cursor_next(cursor);
+	}
 }
 
 SYSCALL_DEFINE1(osdb_vtable_open, int, table)
@@ -515,67 +777,123 @@ SYSCALL_DEFINE1(osdb_vtable_close, int, cursor)
 	if (osdb_cursor_check(cursor))
 		return -EINVAL;
 
+	if (cursors[cursor].filter.cond != NULL)
+		filter_free(&cursors[cursor].filter);
 	cursors[cursor].reserved = 0;
 
 	return 0;
 }
 
-SYSCALL_DEFINE1(osdb_vtable_filter, int, cursor)
+SYSCALL_DEFINE5(osdb_vtable_filter, int, cursor, const char __user *, filter,
+		int, len, int, argc, struct dbsc_value __user *, argv)
 {
+	struct cursor *p;
+	char *kfilter;
+	struct dbsc_value *kargv;
+	int err = 0;
+	int i;
+
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
-
-	if (osdb_cursor_check(cursor))
+	else if (osdb_cursor_check(cursor) || argc < 0 || len < 0) {
 		return -EINVAL;
+	}
 
+	p = cursors + cursor;
+	if (p->filter.len != 0)
+		filter_free(&p->filter);
+
+	if (!access_ok(filter, len)) {
+		return -EFAULT;
+	} else if (!access_ok(argv, sizeof(struct dbsc_value *) * argc)) {
+		return -EFAULT;
+	}
+
+	if (len == 0)
+		goto out;
+
+	kfilter = kmalloc(len + 1, GFP_KERNEL);
+	if (kfilter == NULL) {
+		return -ENOMEM;
+	}
+
+	if (strncpy_from_user(kfilter, filter, len + 1) != len) {
+		err = -EFAULT;
+		goto kfilter_cleanup;
+	}
+
+	kargv = kmalloc(argc * sizeof(struct dbsc_value), GFP_KERNEL);
+	if (!kargv) {
+		err = -ENOMEM;
+		goto kfilter_cleanup;
+	}
+
+	if (copy_from_user(kargv, argv, sizeof(struct dbsc_value) * argc)) {
+		err = -EFAULT;
+		goto kargv_cleanup;
+	}
+
+	for (i = 0; i < argc; ++i) {
+		char *text_value;
+		if (kargv[i].type != DBSC_TEXT)
+			continue;
+
+		text_value = strndup_user(kargv[i].text_value, kargv[i].size);
+		if (text_value == NULL) {
+			err = -ENOMEM;
+			goto kargv_text_cleanup;
+		}
+
+		kargv[i].text_value = text_value;
+	}
+
+	err = filter_init(&p->filter, kfilter, argc, kargv);
+	if (err != 0)
+		goto kargv_text_cleanup;
+
+	kfree(kfilter);
+
+out:
 	osdb_cursor_reset(cursor);
-	return 0;
+	osdb_cursor_advance(cursors + cursor);
+	return err;
+
+kargv_text_cleanup:
+	for (int j = 0; j < i; ++j)
+		dbsc_value_free(kargv + j);
+
+kargv_cleanup:
+	kfree(kargv);
+
+kfilter_cleanup:
+	kfree(kfilter);
+
+	return err;
 }
 
 SYSCALL_DEFINE1(osdb_vtable_next, int, cursor)
 {
-	struct cursor *p;
-	struct list_head *head;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	if (osdb_cursor_check(cursor))
 		return -EINVAL;
 
-	p = cursors + cursor;
-
-	if (list_entry_is_head(p->ssht, head, list))
-		return 0;
-
-	p->row += tables[p->table].colnum;
-	if (p->ssht->len <= p->row) {
-		p->row = 0;
-		head = &tables[p->table].sshts.head;
-		p->ssht = list_next_entry(p->ssht, list);
-
-		if (!list_entry_is_head(p->ssht, head, list))
-			++p->rowid;
-	} else {
-		++p->rowid;
-	}
+	osdb_cursor_next(cursors + cursor);
+	osdb_cursor_advance(cursors + cursor);
 
 	return 0;
 }
 
 SYSCALL_DEFINE1(osdb_vtable_eof, int, cursor)
 {
-	struct cursor *p;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	if (osdb_cursor_check(cursor))
 		return -EINVAL;
 
-	p = cursors + cursor;
-
-	return list_entry_is_head(p->ssht, &tables[p->table].sshts.head, list);
+	return osdb_cursor_end(cursors + cursor);
 }
 
 SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column,
@@ -611,8 +929,8 @@ SYSCALL_DEFINE3(osdb_vtable_column, int, cursor, int, column,
 	return 0;
 }
 
-SYSCALL_DEFINE4(osdb_vtable_column_ptr, int, cursor, int, column,
-		char __user *, buf, int, size)
+SYSCALL_DEFINE4(osdb_vtable_column_ptr, int, cursor, int, column, char __user *,
+		buf, int, size)
 {
 	struct cursor *p;
 	struct dbsc_value *out;
@@ -639,17 +957,13 @@ SYSCALL_DEFINE4(osdb_vtable_column_ptr, int, cursor, int, column,
 
 SYSCALL_DEFINE1(osdb_vtable_rowid, int, cursor)
 {
-	struct cursor *p;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	if (osdb_cursor_check(cursor))
 		return -EINVAL;
 
-	p = cursors + cursor;
-
-	return p->rowid;
+	return cursors[cursor].rowid;
 }
 
 SYSCALL_DEFINE2(osdb_snapshot, int, flags, long long, timestamp)
